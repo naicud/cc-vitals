@@ -113,7 +113,7 @@ const vitals = (input: BandInput, room: number) => {
         <Text dimColor wrap="truncate-end">{session}</Text>
       </Box>
       {cost !== '' && (
-        <Box flexShrink={0}>
+        <Box flexShrink={0} marginLeft={1}>
           <Text bold>{cost}</Text>
         </Box>
       )}
