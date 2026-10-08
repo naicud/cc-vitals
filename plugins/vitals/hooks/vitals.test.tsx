@@ -66,7 +66,7 @@ const CCUSAGE = JSON.stringify({
 // What the engine answers beneath the mod: a session on main with two changed files, 680k of a
 // 1M window auto-compacting at 900k, both plan limits, $4.21 spent, effort high in /config, one
 // running subagent and ccusage's daily report.
-const fakeEngine = (on: On, toasts: string[] = [], stored: unknown[] = [], clock = { now: NOW }) => {
+const fakeEngine = (on: On, toasts: string[] = [], stored: unknown[] = [], clock = { now: NOW }, roster: readonly unknown[] = ROSTER) => {
   on('ui.toast', ($, e) => {
     toasts.push(e.text)
     return { value: undefined }
@@ -112,7 +112,7 @@ const fakeEngine = (on: On, toasts: string[] = [], stored: unknown[] = [], clock
   on('session.cwd', () => ({ value: '/work/cc-vitals' }))
   on('session.turns', () => ({ value: 12 }))
   on('session.model', () => ({ value: 'claude-opus-5-5[1m]' }))
-  on('agent.list', () => ({ value: ROSTER }))
+  on('agent.list', () => ({ value: roster as typeof ROSTER }))
   on('clock.now', () => ({ value: clock.now }))
   on('clock.every', () => ({ value: undefined }))
   on('clock.after', () => ({ value: undefined }))
@@ -409,6 +409,21 @@ test('a narrow vitals box puts the session on a row of its own, the cost whole',
   expect(cost?.text).toBe('💸 $4.21')
   const header = (await ui.findAll({ text: /◆ VITALS.*📁 cc-vitals/ })).at(-1)
   expect(header?.text).toContain('📁 cc-vitals')
+})
+
+const TEN = Array.from({ length: 10 }, (_, i) => ({ id: `a${i}`, description: `Task ${i}`, type: 'Explore', status: 'running' as const }))
+
+test('ten running subagents: a tall band lists them all, a short one gives them one line', async ($, on) => {
+  fakeEngine(on, [], [], { now: NOW }, TEN)
+  await runSession($)
+
+  const tall = await bandText($, 'terminal', { ...PROPS, bodyColumns: 200, maxRows: 40, scroll: { offset: 0, bodyRows: 40 } })
+  for (let i = 0; i < 10; i++) expect(tall).toContain(`Task ${i}`)
+  expect(tall).toContain('10 running')
+
+  const short = await bandText($, 'terminal', { ...PROPS, bodyColumns: 200, maxRows: 16, scroll: { offset: 0, bodyRows: 16 } })
+  expect(short).toContain('🤖 AGENTS')
+  expect(short).toContain('+6')
 })
 
 test('an interrupted turn keeps the last counted tokens on show', async ($, on) => {
