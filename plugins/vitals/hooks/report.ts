@@ -79,8 +79,15 @@ export const weekStart = (date: string) => {
 export const monthStart = (date: string) => `${date.slice(0, 7)}-01`
 export const previousMonthStart = (date: string) => monthStart(addDays(monthStart(date), -1))
 
-/** The ccusage `--since` that covers this month and the one before: `20260901`. */
-export const historySince = (today: string) => previousMonthStart(today).replace(/-/g, '')
+/** Whole weeks the report shows, this one included. */
+export const REPORT_WEEKS = 6
+
+/** The ccusage `--since` that covers this month, the one before and the report's weeks: `20260831`. */
+export const historySince = (today: string) => {
+  const weeksBack = addDays(weekStart(today), -7 * (REPORT_WEEKS - 1))
+  const lastMonth = previousMonthStart(today)
+  return (weeksBack < lastMonth ? weeksBack : lastMonth).replace(/-/g, '')
+}
 
 export type Span = { costUsd: number; tokens: number; days: number }
 

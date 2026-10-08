@@ -5,7 +5,7 @@ import type { Engine } from 'claude-code/testing'
 import { mergeRoster, parseNotification } from './collect'
 import { count, hitRate, prettyModel } from './format'
 import { forecast } from './forecast'
-import { parseDaily, periods, weekStart } from './report'
+import { historySince, parseDaily, periods, weekStart } from './report'
 import { blocks, cellWidth, fitColumns } from './ui'
 
 // Thursday 8 October 2026, noon local; the session began 16 minutes before.
@@ -229,6 +229,8 @@ test('ccusage days fold into today, week and month against the same days before'
   expect(days?.length).toBe(7)
   expect(parseDaily('not json')).toBe(null)
   expect(weekStart('2026-10-08')).toBe('2026-10-05')
+  // Six report weeks reach back to Monday 31 August, before last month's first day.
+  expect(historySince('2026-10-08')).toBe('20260831')
   const [today, week, month] = periods(days ?? [], '2026-10-08')
   expect(today?.now.costUsd).toBe(50)
   expect(week?.now.costUsd).toBe(100)
@@ -345,7 +347,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     const ui = await $.ui.mount({ plugin: 'vitals', surface, component: 'Pane', requestId: 'vitals-report', props: { title: 'r', isFocused: false, bodyColumns: 120, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 60 }, view: {} } })
     const pane = (await ui.find({ text: /./ }))?.text ?? ''
-    for (const text of ['📊 USAGE REPORT', 'Thu 10-08 ◀', '$50.00', 'this week', 'Oct 2026 (so far)', 'Sonnet 5.5']) expect(pane).toContain(text)
+    for (const text of ['📊 USAGE REPORT', 'Thu 10-08 ◀', '$50.00', 'this week', '▲ +150%', 'Oct 2026 (so far)', 'Sonnet 5.5']) expect(pane).toContain(text)
   })
 }
 

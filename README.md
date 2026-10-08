@@ -37,6 +37,10 @@ The level you pick stays for the sessions that follow.
 
 ![vitals-high: the vitals box; tokens per turn and session with cache read and write and hit rate; the context bar; usage today, this week and this month with a sparkline; the agents table; the tools table with calls, errors and a usage bar](docs/screenshots/vitals-high.png)
 
+**`/vitals report`**: the usage report in a pane, from ccusage: the last 14 days, the last 6 weeks, this month and the last, and this month's models.
+
+<img src="docs/screenshots/vitals-report.png" alt="vitals report: cost, tokens and top model per day for 14 days with bars; cost per week for 6 weeks with the change against the week before; this month and last; this month's models with their share" width="600">
+
 ## What it shows
 
 | Section | Contents |

@@ -1,6 +1,6 @@
 import type { HistoryProblem, UsageHistory } from '../types'
 import { ago, count, delta, money, prettyModel } from './format'
-import { addDays, change, localDate, modelShares, monthSpans, weekSpans } from './report'
+import { REPORT_WEEKS, addDays, change, localDate, modelShares, monthSpans, periods, weekSpans } from './report'
 import { ACCENT, blocks, rule, table } from './ui'
 import type { Canvas, Cell, Column } from './ui'
 
@@ -30,7 +30,7 @@ const DAY_COLUMNS: Column[] = [
 ]
 
 const PERIOD_COLUMNS: Column[] = [
-  { title: 'PERIOD', width: 14 },
+  { title: 'PERIOD', width: 17 },
   { title: 'COST', width: 7, align: 'right' },
   { title: 'TOKENS', width: 6, align: 'right' },
   { title: 'VS BEFORE', width: 9, align: 'right', priority: 1 },
@@ -68,13 +68,15 @@ export const drawReport = (canvas: Canvas, room: number, now: number, history: U
       BAR: barCell(day?.costUsd ?? 0, dayTop, barCells),
     }
   })
-  const weeks = weekSpans(history.days, today, 6)
+  // The week and the month still running are set against the same days of the one before.
+  const [, thisWeek, thisMonth] = periods(history.days, today)
+  const weeks = weekSpans(history.days, today, REPORT_WEEKS)
   const weekTop = Math.max(0, ...weeks.map(w => w.costUsd))
   const weekRows = weeks.map((w, i): Record<string, Cell> => ({
     PERIOD: { text: i === 0 ? 'this week' : `week of ${w.from.slice(5)}`, bold: i === 0 },
     COST: { text: money(w.costUsd), bold: i === 0 },
     TOKENS: { text: count(w.tokens), dim: true },
-    'VS BEFORE': deltaCell(w.costUsd, weeks[i + 1]?.costUsd),
+    'VS BEFORE': deltaCell(w.costUsd, i === 0 ? thisWeek?.before?.costUsd : weeks[i + 1]?.costUsd),
     BAR: barCell(w.costUsd, weekTop, barCells),
   }))
   const months = monthSpans(history.days, today)
@@ -83,7 +85,7 @@ export const drawReport = (canvas: Canvas, room: number, now: number, history: U
     PERIOD: { text: `${MONTHS[Number(m.from.slice(5, 7)) - 1] ?? m.from} ${m.from.slice(0, 4)}${i === 0 ? ' (so far)' : ''}`, bold: i === 0 },
     COST: { text: money(m.costUsd), bold: i === 0 },
     TOKENS: { text: count(m.tokens), dim: true },
-    'VS BEFORE': i === 0 ? deltaCell(m.costUsd, months[1]?.costUsd) : { text: '—', dim: true },
+    'VS BEFORE': i === 0 ? deltaCell(m.costUsd, thisMonth?.before?.costUsd) : { text: '—', dim: true },
     BAR: barCell(m.costUsd, monthTop, barCells),
   }))
   const month = months[0]
@@ -104,9 +106,9 @@ export const drawReport = (canvas: Canvas, room: number, now: number, history: U
       </Box>
       {rule(canvas.els, '📅 LAST 14 DAYS', '', inner)}
       {table(canvas.els, DAY_COLUMNS, dayRows, inner)}
-      {rule(canvas.els, '🗓  WEEKS', 'Monday to Sunday', inner)}
+      {rule(canvas.els, '🗓  WEEKS', 'Monday to Sunday · this week against the same days last week', inner)}
       {table(canvas.els, PERIOD_COLUMNS, weekRows, inner)}
-      {rule(canvas.els, '🌙 MONTHS', '', inner)}
+      {rule(canvas.els, '🌙 MONTHS', 'this month against the same days last month', inner)}
       {table(canvas.els, PERIOD_COLUMNS, monthRows, inner)}
       {rule(canvas.els, '🧠 MODELS THIS MONTH', '', inner)}
       {table(canvas.els, MODEL_COLUMNS, modelRows, inner)}
