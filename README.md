@@ -134,7 +134,8 @@ To update by hand (without auto-update): `claude plugin marketplace update naicu
 | Usage report shows `no data` for older days | Claude Code deletes transcripts after `cleanupPeriodDays` (30 by default), so ccusage, and the report, only reach that far back. Raise it in `~/.claude/settings.json` (`"cleanupPeriodDays": 365`) to keep a longer history, at the cost of disk space. Periods that start before the first day on record are not compared against |
 | Usage costs look too low | ccusage could not reach its price list and priced new models at zero: run `ccusage claude daily` once online |
 | One line per section instead of tables | The band has few rows (a short terminal, or Claude's progress is taking them): make the terminal taller, or `/vitals pane` for everything in full |
-| No band at all | Claude Code older than v2.1.287, the plugin disabled (`claude plugin list`), or `/vitals` switched it to the compact line: run `/vitals` again |
+| No band at all | Claude Code older than v2.1.287, or the plugin disabled (`claude plugin list`, then `claude plugin enable vitals@naicud`) |
+| Less than you expect | `/vitals-low` or `/vitals-medium` is on, and the level stays across sessions: `/vitals-high` brings everything back |
 
 ## Settings
 
@@ -177,7 +178,7 @@ plugins/vitals/
 
 ## Credits
 
-Built on [desktop-statusline](https://github.com/centminmod/claude-plugins/tree/master/plugins/desktop-statusline) by George Liu (MIT): the desktop band, limit meters and git row come from there. cc-vitals adds the terminal surface, the framed dashboard, reasoning effort, the token and cache tables, subagent and shell tracking, live tools, the compact line and the pane.
+Built on [desktop-statusline](https://github.com/centminmod/claude-plugins/tree/master/plugins/desktop-statusline) by George Liu (MIT): the desktop band, limit meters and git row come from there. cc-vitals adds the terminal surface, the framed dashboard, reasoning effort, the token and cache tables, subagent and shell tracking, live tools, context composition, limit forecasts, compaction, usage reports, the three detail levels and the pane.
 
 ## Licence
 
