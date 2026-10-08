@@ -1,13 +1,18 @@
-import type { AgentStat, Compactions, LiveTool, ShellStat, Snapshot, ToolCounts, Totals, TurnStat } from '../types'
+import type { RenderChildren } from 'claude-code'
+
+import type { AgentStat, Compactions, HistoryProblem, LiveTool, ShellStat, Snapshot, ToolCounts, Totals, TurnStat, UsageHistory } from '../types'
 import {
   NO_TOKENS,
   addTokens,
   ago,
   count,
+  delta,
+  effortPips,
   elapsed,
   hitRate,
   isActive,
   limitShortLabel,
+  money,
   oneLine,
   prettyModel,
   shortType,
@@ -17,16 +22,18 @@ import {
   until,
 } from './format'
 import type { Part } from './format'
-import { ACCENT, heading, meter, parts, table } from './ui'
-import type { Cell, Column, Els } from './ui'
+import { change, dailyCosts, localDate, modelShares, periods } from './report'
+import { ACCENT, meter, meterChrome, parts, rule, sparkline, table } from './ui'
+import type { Canvas, Cell, Column } from './ui'
 
 export type BandInput = {
-  els: Els
-  /** Cells inside the frame: the site's columns less the border and its padding. */
+  canvas: Canvas
+  /** Cells the drawing is laid out in: the site's columns. */
   room: number
+  /** Rows the drawing may take before it would scroll. */
+  rows: number
   isWorking: boolean
   now: number
-  tick: number
   snap: Snapshot
   turn: TurnStat | null
   totals: Totals | null
@@ -36,143 +43,221 @@ export type BandInput = {
   shells: ShellStat[]
   live: LiveTool[]
   tools: ToolCounts | null
+  history: UsageHistory | null
+  historyProblem: HistoryProblem | null
   cacheTtlMs: number
 }
 
-/** How much history a drawing keeps: the band the recent runs, the pane all of them. */
-export type Depth = { agents: number; shells: number; recentMs: number | null; tools: number }
-
-export const BAND: Depth = { agents: 6, shells: 4, recentMs: 5 * 60_000, tools: 8 }
-export const PANE: Depth = { agents: 40, shells: 40, recentMs: null, tools: 40 }
-
-const FRAME = 4 // the round border and one cell of padding on each side
+/** The round border and one cell of padding on each side; the border's two rows. */
+const FRAME_CELLS = 4
+const FRAME_ROWS = 2
+/** Rule, header and the rule under it: what a table section costs besides its rows. */
+const TABLE_CHROME = 3
 
 const EFFORT_COLORS: Record<string, string> = { max: 'error', xhigh: 'warning', high: ACCENT, medium: 'suggestion', low: 'success' }
+const LIMIT_ICONS: Record<string, string> = { five_hour: '⏳', seven_day: '📅' }
+
 const effortCell = (level: string | null): Cell => (level === null ? { text: '—', dim: true } : { text: level, color: EFFORT_COLORS[level] })
 const hitCell = (hit: number | null): Cell =>
   hit === null ? { text: '—', dim: true } : { text: `${hit}%`, color: hit < 50 ? 'warning' : hit >= 80 ? 'success' : undefined }
+/** The spinner frame: the band redraws once a second while something runs. */
+const frame = (input: BandInput) => Math.floor(input.now / 1000)
 
-/** Active runs first, then the most recent; ended ones only within the window when there is one. */
-const visible = <T extends { status: AgentStat['status']; startedAt: number; endedAt: number | null }>(
-  runs: T[],
-  now: number,
-  limit: number,
-  recentMs: number | null,
-) => {
-  const shown = runs
-    .filter(r => isActive(r.status) || recentMs === null || now - (r.endedAt ?? now) <= recentMs)
-    .sort((a, b) => Number(isActive(b.status)) - Number(isActive(a.status)) || b.startedAt - a.startedAt)
-  return { rows: shown.slice(0, limit), hidden: runs.length - Math.min(shown.length, limit) }
-}
+/** A section drawn in full when the rows allow, else as one line, else not at all. */
+type Section = { full: () => RenderChildren; fullRows: number; mini: () => RenderChildren }
+
+/** Active runs first, then the newest; ended ones stay, dimmed, until newer ones push them out. */
+const newestFirst = <T extends { status: AgentStat['status']; startedAt: number }>(runs: T[]) =>
+  [...runs].sort((a, b) => Number(isActive(b.status)) - Number(isActive(a.status)) || b.startedAt - a.startedAt)
 
 const header = (input: BandInput) => {
-  const { Box, Text } = input.els
+  const { Box, Text } = input.canvas.els
   const { snap } = input
   const where =
     `📁 ${snap.dir}` +
-    (snap.branch === null ? '' : `  ⎇ ${snap.branch}${snap.isWorktree ? ' 🌳' : ''}`) +
+    (snap.branch === null ? '' : `  🌿 ${snap.branch}${snap.isWorktree ? ' 🌳' : ''}`) +
     `${snap.ahead ? ` ↑${snap.ahead}` : ''}${snap.behind ? ` ↓${snap.behind}` : ''}${snap.changed ? ` ●${snap.changed}` : ''}`
-  const session =
-    `⏱ ${ago(input.now - snap.startedAt)} · ${snap.prompts} prompt${snap.prompts === 1 ? '' : 's'}` +
-    (snap.costUsd === null ? '' : ` · $${snap.costUsd.toFixed(2)}`)
+  const ageMs = input.now - snap.startedAt
+  const burn = snap.costUsd !== null && ageMs >= 5 * 60_000 ? `  🔥 ${money(snap.costUsd / (ageMs / 3_600_000))}/h` : ''
   const level = effortCell(input.effort)
   return (
     <Box flexDirection="row" justifyContent="space-between" width="100%">
       <Box flexDirection="row" flexShrink={0}>
-        <Text bold color={ACCENT}>{'◆ VITALS  '}</Text>
+        <Text bold color={ACCENT}>{'◆ VITALS'}</Text>
+        <Text>{'   🧠 '}</Text>
         <Text bold>{prettyModel(snap.model)}</Text>
-        <Text dimColor>{'  effort '}</Text>
-        <Text bold color={level.color} dimColor={level.dim}>{level.text}</Text>
+        <Text>{'   ⚡ '}</Text>
+        <Text bold color={level.color} dimColor={level.dim}>{level.text.toUpperCase()}</Text>
+        {input.effort !== null && <Text color={level.color}>{` ${effortPips(input.effort)}`}</Text>}
       </Box>
-      <Box marginLeft={2} flexShrink={1}>
-        <Text dimColor wrap="truncate-end">{`${where}   ${session}`}</Text>
+      <Box flexDirection="row" marginLeft={2} flexShrink={1}>
+        <Text dimColor wrap="truncate-end">{`${where}   ⏳ ${ago(ageMs)} · ${snap.prompts} prompt${snap.prompts === 1 ? '' : 's'}   `}</Text>
+        {snap.costUsd !== null && <Text bold>{`💸 ${money(snap.costUsd)}`}</Text>}
+        {burn !== '' && <Text dimColor>{burn}</Text>}
       </Box>
     </Box>
   )
 }
 
 const meters = (input: BandInput) => {
-  const { Box } = input.els
+  const { Box, Text } = input.canvas.els
   const { snap } = input
-  const used = snap.contextTokens === null ? '' : `${count(snap.contextTokens)}/${count(snap.contextWindow)}`
-  const details = [used, ...snap.limits.map(l => (l.resetsAt ? `↻ ${until(l.resetsAt, input.now)}` : ''))]
-  const fixed = details.reduce((sum, d) => sum + 4 + 5 + 1 + d.length + 3, 0)
-  const cells = Math.max(6, Math.min(20, Math.floor((input.room - fixed) / details.length)))
+  const items = [
+    { label: '⛽ CTX', percent: snap.contextPercent, detail: snap.contextTokens === null ? '' : `${count(snap.contextTokens)}/${count(snap.contextWindow)}` },
+    ...snap.limits.map(l => ({
+      label: `${LIMIT_ICONS[l.kind] ?? '⏳'} ${limitShortLabel(l.kind)}`,
+      percent: l.percent,
+      detail: l.resetsAt ? `↻ ${until(l.resetsAt, input.now)}` : '',
+    })),
+  ]
+  const chrome = items.reduce((sum, m) => sum + meterChrome(m.label, m.detail), 0) + 3 * (items.length - 1)
+  const cells = Math.max(4, Math.min(24, Math.floor((input.room - chrome) / items.length)))
   return (
-    <Box flexDirection="row" flexWrap="wrap" columnGap={3}>
-      {meter(input.els, 'CTX', snap.contextPercent, used, cells)}
-      {snap.limits.map((l, i) => meter(input.els, limitShortLabel(l.kind), l.percent, details[i + 1] ?? '', cells))}
+    <Box flexDirection="row" flexWrap="wrap">
+      {items.map((m, i) => (
+        <Box flexDirection="row">
+          {i > 0 && <Text dimColor>{' │ '}</Text>}
+          {meter(input.canvas, m.label, m.percent, m.detail, cells)}
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+/** A one-line section: a bold label, then its parts. */
+const lineOf = (input: BandInput, label: string, list: Part[]) => {
+  const { Box, Text } = input.canvas.els
+  return (
+    <Box flexDirection="row">
+      <Box width={11} flexShrink={0}>
+        <Text bold color={ACCENT}>{label}</Text>
+      </Box>
+      {parts(input.canvas.els, list)}
+    </Box>
+  )
+}
+
+const ruled = (input: BandInput, title: string, note: string, body: RenderChildren) => {
+  const { Box } = input.canvas.els
+  return (
+    <Box flexDirection="column">
+      {rule(input.canvas.els, title, note, input.room)}
+      {body}
     </Box>
   )
 }
 
 const TOKEN_COLUMNS: Column[] = [
-  { title: ' ', width: 9 },
-  { title: 'IN', width: 8, align: 'right' },
-  { title: 'OUT', width: 8, align: 'right' },
-  { title: 'CACHE R', width: 10, align: 'right' },
-  { title: 'CACHE W', width: 10, align: 'right' },
-  { title: 'HIT', width: 6, align: 'right' },
-  { title: 'TOTAL', width: 9, align: 'right', priority: 1 },
-  { title: 'NOTE', width: 10, grow: true, priority: 0 },
+  { title: ' ', width: 7 },
+  { title: 'IN', width: 6, align: 'right' },
+  { title: 'OUT', width: 6, align: 'right' },
+  { title: 'CACHE R', width: 7, align: 'right' },
+  { title: 'CACHE W', width: 7, align: 'right' },
+  { title: 'HIT', width: 4, align: 'right' },
+  { title: 'TOTAL', width: 6, align: 'right', priority: 1 },
+  { title: 'NOTE', width: 8, grow: true, priority: 0 },
 ]
 
-const tokenRow = (name: string, t: Record<'input' | 'output' | 'cacheRead' | 'cacheWrite', number>, note: Cell) => ({
+type TokenCounts = Record<'input' | 'output' | 'cacheRead' | 'cacheWrite', number>
+
+const tokenRow = (name: string, t: TokenCounts, note: Cell) => ({
   ' ': { text: name, bold: true },
   IN: { text: count(t.input) },
   OUT: { text: count(t.output) },
   'CACHE R': { text: count(t.cacheRead) },
   'CACHE W': { text: count(t.cacheWrite) },
   HIT: hitCell(hitRate(t)),
-  TOTAL: { text: count(totalTokens(t)), dim: true },
+  TOTAL: { text: count(totalTokens(t)), bold: true },
   NOTE: note,
 })
 
-const tokensSection = (input: BandInput) => {
-  const { Box } = input.els
-  const { turn, totals, compactions: c, snap } = input
+const tokenParts = (name: string, t: TokenCounts): Part[] => {
+  const hit = hitRate(t)
+  return [
+    { text: name, emphasis: 'strong' },
+    { text: `in ${count(t.input)} out ${count(t.output)}` },
+    { text: `R ${count(t.cacheRead)} W ${count(t.cacheWrite)}` },
+    ...(hit === null ? [] : [{ text: `hit ${hit}%`, color: hit < 50 ? 'warning' : 'success' }]),
+  ]
+}
+
+const tokensSection = (input: BandInput): Section | null => {
+  const { turn, totals, snap } = input
+  const hasTurn = turn !== null && turn.tokens !== null && turn.at >= snap.startedAt
+  const hasTotals = totals !== null && totals.since === snap.startedAt
+  if (!hasTurn && !hasTotals) return null
+  const idleMs = turn === null ? 0 : Math.max(0, input.now - turn.at)
+  const isCold = hasTurn && !input.isWorking && idleMs >= input.cacheTtlMs
+  const cache = hasTurn ? (isCold ? '🥶 cache cold' : '🧊 cache warm') : ''
   const rows: Record<string, Cell>[] = []
-  let cache = ''
-  if (turn !== null && turn.tokens !== null && turn.at >= snap.startedAt) {
-    const idleMs = Math.max(0, input.now - turn.at)
-    const isCold = !input.isWorking && idleMs >= input.cacheTtlMs
-    cache = isCold ? 'cache cold' : 'cache warm'
+  if (hasTurn && turn.tokens !== null) {
     const note = input.isWorking ? elapsed(turn.durationMs) : `${elapsed(turn.durationMs)} · idle ${ago(idleMs)}`
     rows.push(tokenRow('turn', turn.tokens, { text: note, color: isCold ? 'warning' : undefined, dim: !isCold }))
   }
-  if (totals !== null && totals.since === snap.startedAt) {
-    const compacted = c !== null && c.since === snap.startedAt ? ` · compacted ${c.count}×` : ''
-    rows.push(tokenRow('session', totals.tokens, { text: `${totals.turns} turn${totals.turns === 1 ? '' : 's'}${compacted}`, dim: true }))
+  if (hasTotals) rows.push(tokenRow('session', totals.tokens, { text: `${totals.turns} turn${totals.turns === 1 ? '' : 's'}`, dim: true }))
+  return {
+    fullRows: TABLE_CHROME + rows.length,
+    full: () => ruled(input, '🔥 TOKENS', cache, table(input.canvas.els, TOKEN_COLUMNS, rows, input.room)),
+    mini: () =>
+      lineOf(input, '🔥 TOKENS', [
+        ...(hasTurn && turn.tokens !== null ? tokenParts('turn', turn.tokens) : []),
+        ...(hasTotals ? tokenParts('session', totals.tokens) : []),
+        ...(cache === '' ? [] : [{ text: cache, color: isCold ? 'warning' : undefined }]),
+      ]),
   }
-  if (rows.length === 0) return null
-  return (
-    <Box flexDirection="column">
-      {heading(input.els, 'TOKENS', cache)}
-      {table(input.els, TOKEN_COLUMNS, rows, input.room)}
-    </Box>
-  )
+}
+
+/** Auto-compaction: where it triggers, how far away, and what the compactions so far did. */
+const compactionSection = (input: BandInput): Section | null => {
+  const { snap, compactions: c } = input
+  const done = c !== null && c.since === snap.startedAt ? c : null
+  if (snap.autoCompactAt === null && done === null) return null
+  const list: Part[] = []
+  if (snap.autoCompactAt !== null) {
+    const at = Math.round((snap.autoCompactAt / snap.contextWindow) * 100)
+    const left = snap.contextTokens === null ? null : snap.autoCompactAt - snap.contextTokens
+    list.push({ text: `auto at ${at}% (${count(snap.autoCompactAt)})` })
+    if (left !== null) list.push({ text: left > 0 ? `${count(left)} to go` : 'due now', color: left < snap.autoCompactAt * 0.1 ? 'warning' : 'text' })
+  } else {
+    list.push({ text: 'auto off', color: 'warning' })
+  }
+  if (done !== null) {
+    list.push({ text: `${done.count}× this session`, emphasis: 'strong' })
+    if (done.before !== null && done.after !== null) {
+      const saved = done.before > 0 ? Math.round((1 - done.after / done.before) * 100) : 0
+      list.push({ text: `last ${count(done.before)} → ${count(done.after)} (−${saved}%)` })
+    }
+    if (done.at !== null) list.push({ text: `${done.trigger ?? 'auto'} · ${ago(input.now - done.at)} ago` })
+  }
+  const line = () => lineOf(input, '🗜  COMPACT', list)
+  return { fullRows: 1, full: line, mini: line }
 }
 
 const AGENT_COLUMNS: Column[] = [
-  { title: ' ', width: 2 },
-  { title: 'AGENT', width: 14, grow: true },
-  { title: 'TYPE', width: 14, priority: 1 },
-  { title: 'MODEL', width: 13 },
-  { title: 'EFFORT', width: 8, priority: 3 },
-  { title: 'TOKENS', width: 8, align: 'right' },
-  { title: 'HIT', width: 5, align: 'right', priority: 2 },
-  { title: 'TOOLS', width: 6, align: 'right', priority: 0 },
-  { title: 'TIME', width: 8, align: 'right' },
+  { title: ' ', width: 1 },
+  { title: 'AGENT', width: 12, grow: true },
+  { title: 'TYPE', width: 13, priority: 1 },
+  { title: 'MODEL', width: 11 },
+  { title: 'EFFORT', width: 6, priority: 3 },
+  { title: 'TOKENS', width: 6, align: 'right' },
+  { title: 'HIT', width: 4, align: 'right', priority: 2 },
+  { title: 'TOOLS', width: 5, align: 'right', priority: 0 },
+  { title: 'TIME', width: 6, align: 'right' },
 ]
 
 const mainRow = (input: BandInput): Record<string, Cell> => {
   const agentTokens = input.agents.reduce((sum, a) => addTokens(sum, a.tokens), NO_TOKENS)
   const all = input.totals?.since === input.snap.startedAt ? input.totals.tokens : NO_TOKENS
-  const own = { input: all.input - agentTokens.input, output: all.output - agentTokens.output, cacheRead: all.cacheRead - agentTokens.cacheRead, cacheWrite: all.cacheWrite - agentTokens.cacheWrite }
+  const own = {
+    input: all.input - agentTokens.input,
+    output: all.output - agentTokens.output,
+    cacheRead: all.cacheRead - agentTokens.cacheRead,
+    cacheWrite: all.cacheWrite - agentTokens.cacheWrite,
+  }
   const toolsAll = input.tools?.since === input.snap.startedAt ? input.tools.counts.reduce((s, c) => s + c.count, 0) : 0
   const toolsAgents = input.agents.reduce((s, a) => s + a.tools, 0)
   return {
-    ' ': { text: input.isWorking ? statusMark('running', input.tick).glyph : '◆', color: ACCENT },
+    ' ': { text: input.isWorking ? statusMark('running', frame(input)).glyph : '◆', color: ACCENT },
     AGENT: { text: 'main', bold: true },
     TYPE: { text: 'session', dim: true },
     MODEL: { text: prettyModel(input.snap.model) },
@@ -185,7 +270,7 @@ const mainRow = (input: BandInput): Record<string, Cell> => {
 }
 
 const agentRow = (input: BandInput, a: AgentStat): Record<string, Cell> => {
-  const mark = statusMark(a.status, input.tick)
+  const mark = statusMark(a.status, frame(input))
   return {
     ' ': { text: mark.glyph, color: mark.color },
     AGENT: { text: a.description || shortType(a.type), dim: !isActive(a.status) },
@@ -199,40 +284,57 @@ const agentRow = (input: BandInput, a: AgentStat): Record<string, Cell> => {
   }
 }
 
-const agentsSection = (input: BandInput, depth: Depth) => {
-  const { Box } = input.els
+const runNote = (running: number, all: number, hidden: number) =>
+  `${running} running · ${all - running} done${hidden > 0 ? ` · +${hidden} in /vitals pane` : ''}`
+
+const agentsSection = (input: BandInput, limit: number): Section | null => {
   if (input.agents.length === 0) return null
-  const { rows, hidden } = visible(input.agents, input.now, depth.agents, depth.recentMs)
-  const running = input.agents.filter(a => isActive(a.status)).length
-  const note = `${running} running · ${input.agents.length - running} done${hidden > 0 ? ` · ${hidden} more in /vitals pane` : ''}`
-  return (
-    <Box flexDirection="column">
-      {heading(input.els, 'AGENTS', note)}
-      {table(input.els, AGENT_COLUMNS, [mainRow(input), ...rows.map(a => agentRow(input, a))], input.room)}
-    </Box>
-  )
+  const sorted = newestFirst(input.agents)
+  const running = sorted.filter(a => isActive(a.status))
+  const build = (n: number) => {
+    const shown = sorted.slice(0, Math.max(running.length, n))
+    const note = runNote(running.length, sorted.length, sorted.length - shown.length)
+    return ruled(input, '🤖 AGENTS', note, table(input.canvas.els, AGENT_COLUMNS, [mainRow(input), ...shown.map(a => agentRow(input, a))], input.room))
+  }
+  const rows = Math.min(sorted.length, limit)
+  return {
+    fullRows: TABLE_CHROME + 1 + Math.max(running.length, rows),
+    full: () => build(rows),
+    mini: () =>
+      lineOf(input, '🤖 AGENTS', [
+        ...sorted.slice(0, 4).map(a => {
+          const mark = statusMark(a.status, frame(input))
+          return {
+            text: `${mark.glyph} ${shortType(a.type)} ${a.model === null ? '' : prettyModel(a.model)}${a.effort ? ` ${a.effort}` : ''} ${count(totalTokens(a.tokens))}`,
+            color: isActive(a.status) ? 'text' : undefined,
+          }
+        }),
+        ...(sorted.length > 4 ? [{ text: `+${sorted.length - 4}` }] : []),
+      ]),
+  }
 }
 
 const SHELL_COLUMNS: Column[] = [
-  { title: ' ', width: 2 },
-  { title: 'SHELL', width: 11, priority: 1 },
+  { title: ' ', width: 1 },
+  { title: 'SHELL', width: 9, priority: 1 },
   { title: 'COMMAND', width: 16, grow: true },
-  { title: 'BY', width: 14, priority: 0 },
-  { title: 'STATUS', width: 10, priority: 2 },
-  { title: 'TIME', width: 8, align: 'right' },
+  { title: 'BY', width: 12, priority: 0 },
+  { title: 'STATUS', width: 9, priority: 2 },
+  { title: 'TIME', width: 6, align: 'right' },
 ]
 
-const shellsSection = (input: BandInput, depth: Depth) => {
-  const { Box } = input.els
+const shellsSection = (input: BandInput, limit: number): Section | null => {
   if (input.shells.length === 0) return null
-  const { rows, hidden } = visible(input.shells, input.now, depth.shells, depth.recentMs)
-  const running = input.shells.filter(s => isActive(s.status)).length
+  const sorted = newestFirst(input.shells)
+  const running = sorted.filter(s => isActive(s.status))
   const by = (agentId: string | null) => {
     const agent = agentId === null ? undefined : input.agents.find(a => a.id === agentId)
     return agent ? shortType(agent.type) : 'main'
   }
-  const cells = rows.map((s): Record<string, Cell> => {
-    const mark = statusMark(s.status, input.tick)
+  const rows = Math.min(sorted.length, limit)
+  const shown = sorted.slice(0, Math.max(running.length, rows))
+  const cells = shown.map((s): Record<string, Cell> => {
+    const mark = statusMark(s.status, frame(input))
     return {
       ' ': { text: mark.glyph, color: mark.color },
       SHELL: { text: s.id, dim: true },
@@ -242,18 +344,88 @@ const shellsSection = (input: BandInput, depth: Depth) => {
       TIME: { text: elapsed((s.endedAt ?? input.now) - s.startedAt), dim: !isActive(s.status) },
     }
   })
-  const note = `${running} running · ${input.shells.length - running} done${hidden > 0 ? ` · ${hidden} more in /vitals pane` : ''}`
-  return (
-    <Box flexDirection="column">
-      {heading(input.els, 'SHELLS', note)}
-      {table(input.els, SHELL_COLUMNS, cells, input.room)}
-    </Box>
-  )
+  const note = runNote(running.length, sorted.length, sorted.length - shown.length)
+  return {
+    fullRows: TABLE_CHROME + shown.length,
+    full: () => ruled(input, '🐚 SHELLS', note, table(input.canvas.els, SHELL_COLUMNS, cells, input.room)),
+    mini: () =>
+      lineOf(input, '🐚 SHELLS', [
+        ...sorted.slice(0, 3).map(s => {
+          const mark = statusMark(s.status, frame(input))
+          return {
+            text: `${mark.glyph} ${oneLine(s.description ?? s.command)} ${s.status} ${elapsed((s.endedAt ?? input.now) - s.startedAt)}`,
+            color: isActive(s.status) ? ACCENT : undefined,
+          }
+        }),
+        ...(sorted.length > 3 ? [{ text: `+${sorted.length - 3}` }] : []),
+      ]),
+  }
+}
+
+const USAGE_COLUMNS: Column[] = [
+  { title: 'PERIOD', width: 6 },
+  { title: 'COST', width: 7, align: 'right' },
+  { title: 'TOKENS', width: 6, align: 'right' },
+  { title: 'VS BEFORE', width: 9, align: 'right', priority: 2 },
+  { title: 'TOP MODELS', width: 10, grow: true, priority: 1 },
+]
+
+const deltaCell = (now: number, before: number): Cell => {
+  const pct = change(now, before)
+  return pct === null ? { text: '—', dim: true } : { text: delta(pct), color: pct > 0 ? 'warning' : 'success' }
+}
+
+/** Today, this week and this month across every session, with a 14-day sparkline. */
+const usageSection = (input: BandInput): Section | null => {
+  const { Box, Text } = input.canvas.els
+  const { history, historyProblem: problem } = input
+  if (history === null) {
+    if (problem === null) return null
+    const line = () => lineOf(input, '📊 USAGE', [{ text: `no history: ${problem.reason}` }])
+    return { fullRows: 1, full: line, mini: line }
+  }
+  const today = localDate(input.now)
+  const spans = periods(history.days, today)
+  const rows = spans.map((p): Record<string, Cell> => {
+    const top = modelShares(history.days, p.from, p.to).slice(0, 2)
+    const share = (usd: number) => (p.now.costUsd > 0 ? Math.round((usd / p.now.costUsd) * 100) : 0)
+    return {
+      PERIOD: { text: p.name, bold: true },
+      COST: { text: money(p.now.costUsd), bold: true },
+      TOKENS: { text: count(p.now.tokens) },
+      'VS BEFORE': p.before === null ? { text: '—', dim: true } : deltaCell(p.now.costUsd, p.before.costUsd),
+      'TOP MODELS': { text: top.map(m => `${prettyModel(m.model)} ${share(m.costUsd)}%`).join(' · '), dim: true },
+    }
+  })
+  const costs = dailyCosts(history.days, today, 14)
+  const stale = problem !== null && problem.at > history.at ? '⚠ stale · ' : ''
+  const note = `${stale}ccusage · ${ago(input.now - history.at)} ago`
+  return {
+    fullRows: TABLE_CHROME + rows.length + 1,
+    full: () =>
+      ruled(
+        input,
+        '📊 USAGE',
+        note,
+        <Box flexDirection="column">
+          {table(input.canvas.els, USAGE_COLUMNS, rows, input.room)}
+          <Box flexDirection="row">
+            <Text dimColor>{'14 days  '}</Text>
+            <Text color={ACCENT}>{sparkline(costs)}</Text>
+            <Text dimColor>{`  peak ${money(Math.max(...costs))} · /vitals report`}</Text>
+          </Box>
+        </Box>,
+      ),
+    mini: () =>
+      lineOf(input, '📊 USAGE', [
+        ...spans.map(p => ({ text: `${p.name} ${money(p.now.costUsd)}`, emphasis: 'strong' as const })),
+        { text: sparkline(costs), color: ACCENT },
+      ]),
+  }
 }
 
 /** What runs right now, and the session's most used tools. */
-const activity = (input: BandInput, depth: Depth) => {
-  const { Box, Text } = input.els
+const liveSection = (input: BandInput): Section | null => {
   const agentName = (id: string | null) => {
     const agent = id === null ? undefined : input.agents.find(a => a.id === id)
     return agent ? ` ‹${shortType(agent.type)}›` : ''
@@ -263,68 +435,106 @@ const activity = (input: BandInput, depth: Depth) => {
     return { text: `${t.tool}${ms >= 1000 ? ` ${elapsed(ms)}` : ''}${agentName(t.agentId)}`, color: 'text' }
   })
   const counts = input.tools?.since === input.snap.startedAt ? [...input.tools.counts].sort((a, b) => b.count - a.count) : []
-  const top: Part[] = counts.slice(0, depth.tools).map(c => ({ text: `${c.tool} ${c.count}` }))
-  if (counts.length > depth.tools) top.push({ text: `+${counts.length - depth.tools}` })
-  return (
-    <Box flexDirection="column" marginTop={1}>
-      {now.length > 0 && (
-        <Box flexDirection="row">
-          <Box width={8} flexShrink={0}>
-            <Text bold color={ACCENT}>{`${statusMark('running', input.tick).glyph} NOW`}</Text>
-          </Box>
-          {parts(input.els, now)}
-        </Box>
-      )}
-      {top.length > 0 && (
-        <Box flexDirection="row">
-          <Box width={8} flexShrink={0}>
-            <Text bold dimColor>{'⚒ TOOLS'}</Text>
-          </Box>
-          {parts(input.els, top)}
-        </Box>
-      )}
-    </Box>
-  )
+  const top: Part[] = counts.slice(0, 8).map(c => ({ text: `${c.tool} ${c.count}` }))
+  if (counts.length > 8) top.push({ text: `+${counts.length - 8}` })
+  if (now.length === 0 && top.length === 0) return null
+  const nowLine = () => lineOf(input, `${statusMark('running', frame(input)).glyph} NOW`, now)
+  const toolsLine = () => lineOf(input, '🔧 TOOLS', top)
+  const { Box } = input.canvas.els
+  return {
+    fullRows: (now.length > 0 ? 1 : 0) + (top.length > 0 ? 1 : 0),
+    full: () => (
+      <Box flexDirection="column">
+        {now.length > 0 && nowLine()}
+        {top.length > 0 && toolsLine()}
+      </Box>
+    ),
+    mini: () => (now.length > 0 ? nowLine() : toolsLine()),
+  }
 }
 
-/** The framed dashboard: header, meters, tokens, agents, shells and live activity. */
-export const drawBand = (input: BandInput, depth: Depth) => {
-  const { Box } = input.els
-  const inner = { ...input, room: input.room - FRAME }
+/**
+ * Lays the sections out in the rows there are, never scrolling: every section gets one line
+ * first, then the most important ones grow to full while they fit. One line per section that
+ * does not fit at all is dropped, lowest priority first.
+ */
+const layout = (sections: (Section | null)[], budget: number) => {
+  const present = sections.filter((s): s is Section => s !== null)
+  const kept = present.slice(0, Math.max(0, budget))
+  let left = budget - kept.length
+  return kept.map(s => {
+    const extra = s.fullRows - 1
+    if (extra <= left) {
+      left -= extra
+      return s.full()
+    }
+    return s.mini()
+  })
+}
+
+/** The framed dashboard, its sections sized to the rows the band has. */
+export const drawBand = (input: BandInput, maxBandRows: number) => {
+  const { Box } = input.canvas.els
+  const inner = { ...input, room: input.room - FRAME_CELLS }
+  const budget = Math.min(input.rows, maxBandRows) - FRAME_ROWS - 2
+  // Table sections ask for as many rows as they could show; the layout trims the rest.
+  const sections = [
+    tokensSection(inner),
+    agentsSection(inner, Math.max(1, budget - 8)),
+    liveSection(inner),
+    compactionSection(inner),
+    usageSection(inner),
+    shellsSection(inner, Math.max(1, budget - 10)),
+  ]
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={ACCENT} paddingX={1}>
       {header(inner)}
       {meters(inner)}
-      {tokensSection(inner)}
-      {agentsSection(inner, depth)}
-      {shellsSection(inner, depth)}
-      {activity(inner, depth)}
+      {layout(sections, budget)}
     </Box>
   )
 }
 
-// One line for small windows: model, effort, context, limits, cache hit, cost, what runs.
+/** Every section in full, for the pane, which scrolls. */
+export const drawAll = (input: BandInput) => {
+  const { Box } = input.canvas.els
+  const inner = { ...input, room: input.room - FRAME_CELLS }
+  const sections = [
+    tokensSection(inner),
+    compactionSection(inner),
+    agentsSection(inner, 40),
+    shellsSection(inner, 40),
+    liveSection(inner),
+    usageSection(inner),
+  ]
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={ACCENT} paddingX={1}>
+      {header(inner)}
+      {meters(inner)}
+      {sections.map(s => (s === null ? null : s.full()))}
+    </Box>
+  )
+}
+
+// One line for small windows: model, effort, context, limits, cache hit, cost, week, what runs.
 export const drawCompact = (input: BandInput) => {
   const { snap, turn } = input
   const hit = turn?.tokens ? hitRate(turn.tokens) : null
   const runningAgents = input.agents.filter(a => isActive(a.status)).length
   const runningShells = input.shells.filter(s => isActive(s.status)).length
-  const spin = statusMark('running', input.tick).glyph
   const level = effortCell(input.effort)
+  const week = input.history === null ? undefined : periods(input.history.days, localDate(input.now))[1]
+  const warnIf = (percent: number) => (tone(percent) === undefined ? undefined : ('warning' as const))
   const list: Part[] = [
-    { text: `◆ ${prettyModel(snap.model)}`, emphasis: 'strong' },
-    ...(input.effort === null ? [] : [{ text: `effort ${input.effort}`, color: level.color }]),
-    ...(snap.contextPercent === null
-      ? []
-      : [{ text: `ctx ${snap.contextPercent}%`, emphasis: tone(snap.contextPercent) === undefined ? undefined : ('warning' as const) }]),
-    ...snap.limits.map(l => ({
-      text: `${limitShortLabel(l.kind).toLowerCase()} ${l.percent}%`,
-      emphasis: tone(l.percent) === undefined ? undefined : ('warning' as const),
-    })),
-    ...(hit === null ? [] : [{ text: `hit ${hit}%`, emphasis: hit < 50 ? ('warning' as const) : undefined }]),
-    ...(snap.costUsd === null ? [] : [{ text: `$${snap.costUsd.toFixed(2)}` }]),
-    ...(runningAgents === 0 ? [] : [{ text: `${spin} ${runningAgents} agent${runningAgents > 1 ? 's' : ''}`, color: ACCENT }]),
-    ...(runningShells === 0 ? [] : [{ text: `$ ${runningShells} shell${runningShells > 1 ? 's' : ''}`, color: ACCENT }]),
+    { text: `🧠 ${prettyModel(snap.model)}`, emphasis: 'strong' },
+    ...(input.effort === null ? [] : [{ text: `⚡ ${input.effort}`, color: level.color }]),
+    ...(snap.contextPercent === null ? [] : [{ text: `⛽ ${snap.contextPercent}%`, emphasis: warnIf(snap.contextPercent) }]),
+    ...snap.limits.map(l => ({ text: `${LIMIT_ICONS[l.kind] ?? '⏳'} ${l.percent}%`, emphasis: warnIf(l.percent) })),
+    ...(hit === null ? [] : [{ text: `🧊 ${hit}%`, emphasis: hit < 50 ? ('warning' as const) : undefined }]),
+    ...(snap.costUsd === null ? [] : [{ text: `💸 ${money(snap.costUsd)}`, emphasis: 'strong' as const }]),
+    ...(week === undefined ? [] : [{ text: `📊 week ${money(week.now.costUsd)}` }]),
+    ...(runningAgents === 0 ? [] : [{ text: `${statusMark('running', frame(input)).glyph} 🤖 ${runningAgents}`, color: ACCENT }]),
+    ...(runningShells === 0 ? [] : [{ text: `🐚 ${runningShells}`, color: ACCENT }]),
   ]
-  return parts(input.els, list)
+  return parts(input.canvas.els, list)
 }

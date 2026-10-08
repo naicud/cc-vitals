@@ -1,6 +1,6 @@
-import type { AgentInfo, ConfigRow, SessionUsage } from 'claude-code'
+import type { AgentInfo, ConfigRow, SessionContextBreakdown, SessionUsage } from 'claude-code'
 
-import type { AgentStat, Limit, LiveTool, RunStatus, ShellStat, Snapshot, ToolCounts, Tokens } from '../types'
+import type { AgentStat, Limit, LiveTool, RunStatus, ShellStat, ToolCounts, Tokens } from '../types'
 import { NO_TOKENS, addTokens, isActive, limitLabel, notifiedStatus, runStatus, until } from './format'
 
 // Pure folds over the session's values: register.tsx reads the engine and writes the results.
@@ -8,42 +8,46 @@ import { NO_TOKENS, addTokens, isActive, limitLabel, notifiedStatus, runStatus, 
 const KEEP = 40
 const WARN_AT = [95, 80]
 
-/** The snapshot of one refresh: usage, folder, git state and model. */
-export const buildSnapshot = (args: {
-  usage: SessionUsage
-  cwd: string
-  now: number
-  prompts: number
-  model: string
-  gitStatus: string | null
-  gitDirs: string | null
-}): Snapshot => {
-  const { usage, cwd } = args
-  const lines = args.gitStatus?.split('\n') ?? []
+/** Where the session works: folder and git state, from `git status --porcelain=v2 --branch` and `rev-parse`. */
+export const placeOf = (cwd: string, gitStatus: string | null, gitDirs: string | null) => {
+  const lines = gitStatus?.split('\n') ?? []
   const head = lines.find(l => l.startsWith('# branch.head '))?.slice(14)
   const ab = lines.find(l => l.startsWith('# branch.ab '))?.match(/\+(\d+) -(\d+)/)
-  const [gitDir, commonDir] = args.gitDirs?.split('\n') ?? []
-  // Measure against the auto-compact window when one smaller than the model's is set, as /context does.
-  const { tokens: contextTokens, window: modelWindow, breakdown } = usage.context
-  const contextWindow = breakdown?.isAutoCompactEnabled ? Math.min(modelWindow, breakdown.rawMaxTokens) : modelWindow
+  const [gitDir, commonDir] = gitDirs?.split('\n') ?? []
   return {
-    at: args.now,
-    startedAt: usage.startedAt,
-    prompts: args.prompts,
-    model: args.model,
     dir: cwd.split('/').pop() || cwd,
     branch: head && head !== '(detached)' ? head : null,
     isWorktree: gitDir !== commonDir,
     ahead: Number(ab?.[1] ?? 0),
     behind: Number(ab?.[2] ?? 0),
     changed: lines.filter(l => l && !l.startsWith('#')).length,
-    contextPercent: contextTokens === undefined ? null : Math.round((contextTokens / contextWindow) * 100),
-    contextTokens: contextTokens ?? null,
-    contextWindow,
-    costUsd: usage.cost?.usd ?? null,
-    limits: usage.rateLimits.map(r => ({ kind: r.kind, percent: r.percentUsed, resetsAt: r.resetsAt ?? null })),
   }
 }
+
+/**
+ * The meters, from a measurement (`session.measure`'s input or `$.session.usage()`): context fill
+ * against the auto-compact window when one smaller than the model's is known, as /context does.
+ */
+export const metersOf = (
+  measured: Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>,
+  compactWindow: number | null,
+) => {
+  const { tokens, window: modelWindow } = measured.context
+  const contextWindow = compactWindow === null ? modelWindow : Math.min(modelWindow, compactWindow)
+  return {
+    contextPercent: tokens === undefined ? null : Math.round((tokens / contextWindow) * 100),
+    contextTokens: tokens ?? null,
+    contextWindow,
+    costUsd: measured.cost?.usd ?? null,
+    limits: measured.rateLimits.map(r => ({ kind: r.kind, percent: r.percentUsed, resetsAt: r.resetsAt ?? null })),
+  }
+}
+
+/** The compaction window and threshold a `/context` breakdown reports, when auto-compaction is on. */
+export const compactionOf = (breakdown: SessionContextBreakdown | undefined) => ({
+  compactWindow: breakdown?.isAutoCompactEnabled ? breakdown.rawMaxTokens : null,
+  autoCompactAt: breakdown?.isAutoCompactEnabled ? (breakdown.autoCompactThreshold ?? null) : null,
+})
 
 /** The plan-limit toasts not raised yet in their window: a key to remember and the text to show. */
 export const limitWarnings = (limits: Limit[], seen: string[], now: number) =>

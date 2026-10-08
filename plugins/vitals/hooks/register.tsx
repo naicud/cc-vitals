@@ -1,26 +1,30 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, ProcessRunResult, Register } from 'claude-code'
+import type { EngineInterface, ProcessRunResult, Register, SessionUsage } from 'claude-code'
 
-import type { LiveTool, RunStatus, ShellStat, Tokens } from '../types'
-import { BAND, PANE, drawBand, drawCompact } from './band'
+import type { AgentStat, LiveTool, RunStatus, ShellStat, Snapshot, Tokens } from '../types'
+import { drawAll, drawBand, drawCompact } from './band'
 import type { BandInput } from './band'
 import {
   addShell,
   agentStep,
   agentTokens,
   agentTool,
-  buildSnapshot,
+  compactionOf,
   configuredEffort,
   countTool,
   endRun,
   isBusy,
   limitWarnings,
   mergeRoster,
+  metersOf,
   parseNotification,
+  placeOf,
   startLive,
 } from './collect'
 import { NO_TOKENS, addTokens, toTokens } from './format'
-import type { Els } from './ui'
+import { historySince, localDate, parseDaily } from './report'
+import { drawReport } from './report-view'
+import type { Canvas } from './ui'
 
 // The session's values, declared in ../types: kept by the host across reloads, gone with the session.
 const snapshot = atom({ plugin: 'vitals', key: 'snap' } as const, null)
@@ -34,14 +38,30 @@ const agents = atom({ plugin: 'vitals', key: 'agents' } as const, [])
 const shells = atom({ plugin: 'vitals', key: 'shells' } as const, [])
 const live = atom({ plugin: 'vitals', key: 'live' } as const, [])
 const tools = atom({ plugin: 'vitals', key: 'tools' } as const, null)
-const tick = atom({ plugin: 'vitals', key: 'tick' } as const, 0)
+const history = atom({ plugin: 'vitals', key: 'history' } as const, null)
+const historyProblem = atom({ plugin: 'vitals', key: 'historyProblem' } as const, null)
 
+// What each kind of work costs decides how often it runs: a measurement is free and drawn at
+// once; git is two processes; the /context estimate walks the context; ccusage reads every
+// transcript on the machine.
 const REFRESH_MS = 60_000
+const GIT_EVERY_MS = 20_000
+const BREAKDOWN_EVERY_MS = 5 * 60_000
+const HISTORY_EVERY_MS = 15 * 60_000
 const TICK_MS = 1000
+const MAX_BAND_ROWS = 26
 const PANE_ID = 'vitals'
-const PANE_TITLE = 'Vitals: agents, shells, tokens'
+const REPORT_ID = 'vitals-report'
+const HISTORY_KEY = 'history'
 
-// Each git command is written out in full at its call; this only reads the result.
+// Module memory: what the slow reads returned last, and when. A reload starts it over.
+let gitAt = 0
+let gitPlace: ReturnType<typeof placeOf> | null = null
+let breakdownAt = 0
+let compaction: ReturnType<typeof compactionOf> = { compactWindow: null, autoCompactAt: null }
+let isReadingHistory = false
+
+// Each command is written out in full at its call; this only reads the result.
 async function output(run: Promise<ProcessRunResult>) {
   try {
     const ran = await run
@@ -51,91 +71,163 @@ async function output(run: Promise<ProcessRunResult>) {
   }
 }
 
+async function setAgents($: EngineInterface, fn: (list: AgentStat[]) => AgentStat[]) {
+  const was = await read($, agents)
+  const next = fn(was)
+  if (JSON.stringify(next) !== JSON.stringify(was)) await update($, agents, () => next)
+}
+
+async function setShells($: EngineInterface, fn: (list: ShellStat[]) => ShellStat[]) {
+  const was = await read($, shells)
+  const next = fn(was)
+  if (JSON.stringify(next) !== JSON.stringify(was)) await update($, shells, () => next)
+}
+
+/** Draws a measurement into the meters at once: no call, the figures came with the event. */
+async function applyMeasure($: EngineInterface, measured: Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>, now: number) {
+  const meters = metersOf(measured, compaction.compactWindow)
+  await update($, snapshot, s => (s === null ? s : { ...s, ...meters, autoCompactAt: compaction.autoCompactAt, at: now }))
+  const warnings = limitWarnings(meters.limits, await read($, warned), now)
+  for (const w of warnings) $.ui.toast(w.text, { timeoutMs: 8000 })
+  if (warnings.length > 0) await update($, warned, s => [...s, ...warnings.map(w => w.key)].slice(-50))
+}
+
+/** The whole snapshot: the cheap reads every time, git and the /context estimate when due. */
 async function refresh($: EngineInterface) {
-  const [usage, cwd, now, prompts, model, roster] = await Promise.all([
-    // A local estimate (no API calls), asked for only its compaction window.
-    $.session.usage({ breakdown: 'summary' }),
+  const now = await $.clock.now()
+  const isBreakdownDue = now - breakdownAt >= BREAKDOWN_EVERY_MS
+  const [usage, cwd, prompts, model, roster] = await Promise.all([
+    isBreakdownDue ? $.session.usage({ breakdown: 'summary' }) : $.session.usage(),
     $.session.cwd(),
-    $.clock.now(),
     $.session.turns(),
     $.session.model(),
     $.agent.list(),
   ])
-  const [gitStatus, gitDirs] = await Promise.all([
-    output($.process.run(['git', 'status', '--porcelain=v2', '--branch'], { cwd, timeoutMs: 5000 })),
-    output($.process.run(['git', 'rev-parse', '--git-dir', '--git-common-dir'], { cwd, timeoutMs: 5000 })),
-  ])
+  if (isBreakdownDue) {
+    breakdownAt = now
+    compaction = compactionOf(usage.context.breakdown)
+  }
+  if (gitPlace === null || now - gitAt >= GIT_EVERY_MS) {
+    gitAt = now
+    const [gitStatus, gitDirs] = await Promise.all([
+      output($.process.run(['git', 'status', '--porcelain=v2', '--branch'], { cwd, timeoutMs: 5000 })),
+      output($.process.run(['git', 'rev-parse', '--git-dir', '--git-common-dir'], { cwd, timeoutMs: 5000 })),
+    ])
+    gitPlace = placeOf(cwd, gitStatus, gitDirs)
+  }
   if ((await read($, effort)) === null) {
     const configured = await $.config.list().then(configuredEffort, () => null)
     if (configured !== null) await update($, effort, () => configured)
   }
-
-  const snap = buildSnapshot({ usage, cwd, now, prompts, model, gitStatus, gitDirs })
+  const snap: Snapshot = {
+    at: now,
+    startedAt: usage.startedAt,
+    prompts,
+    model,
+    ...gitPlace,
+    ...metersOf(usage, compaction.compactWindow),
+    autoCompactAt: compaction.autoCompactAt,
+  }
   await update($, snapshot, () => snap)
-  await update($, agents, list => mergeRoster(list, roster, now))
+  await setAgents($, list => mergeRoster(list, roster, now))
+  await applyMeasure($, usage, now)
+}
 
-  const warnings = limitWarnings(snap.limits, await read($, warned), now)
-  for (const w of warnings) $.ui.toast(w.text, { timeoutMs: 8000 })
-  if (warnings.length > 0) await update($, warned, s => [...s, ...warnings.map(w => w.key)].slice(-50))
+/** Usage across every session from ccusage, kept in the store so a new session draws it at once. */
+async function refreshHistory($: EngineInterface, isForced: boolean) {
+  if (isReadingHistory) return
+  const now = await $.clock.now()
+  const held = await read($, history)
+  if (!isForced && held !== null && now - held.at < HISTORY_EVERY_MS) return
+
+  isReadingHistory = true
+  try {
+    const ran = await $.process.run(['ccusage', 'claude', 'daily', '--json', '--since', historySince(localDate(now))], { timeoutMs: 60_000 })
+    const days = ran.exitCode === 0 ? parseDaily(ran.stdout) : null
+    if (days === null) {
+      await update($, historyProblem, () => ({ at: now, reason: ran.exitCode === 0 ? 'unreadable ccusage output' : `ccusage exited ${ran.exitCode}` }))
+      return
+    }
+    await update($, history, () => ({ at: now, days }))
+    await $.store.set(HISTORY_KEY, { at: now, text: ran.stdout })
+  } catch {
+    await update($, historyProblem, () => ({ at: now, reason: 'ccusage not found (npm i -g ccusage)' }))
+  } finally {
+    isReadingHistory = false
+  }
+}
+
+/** The history the last session kept, if the store holds a readable one. */
+async function restoreHistory($: EngineInterface) {
+  if ((await read($, history)) !== null) return
+  const saved: unknown = await $.store.get(HISTORY_KEY)
+  if (typeof saved !== 'object' || saved === null) return
+  const at: unknown = Reflect.get(saved, 'at')
+  const text: unknown = Reflect.get(saved, 'text')
+  if (typeof at !== 'number' || typeof text !== 'string') return
+  const days = parseDaily(text)
+  if (days !== null) await update($, history, () => ({ at, days }))
 }
 
 /** A model request: the main loop's sets the session's effort, a subagent's its own model and effort. */
 async function noteStep($: EngineInterface, agentId: string | undefined, model: string, level: string | null) {
   if (agentId === undefined) {
-    if (level !== null) await update($, effort, () => level)
+    if (level !== null && (await read($, effort)) !== level) await update($, effort, () => level)
     return
   }
   const now = await $.clock.now()
-  await update($, agents, list => agentStep(list, agentId, model, level, now))
+  await setAgents($, list => agentStep(list, agentId, model, level, now))
 }
 
 /** A finished turn: the main loop's is the last turn; every loop adds to the session's totals. */
 async function noteTurn($: EngineInterface, agentId: string | undefined, durationMs: number, model: string | null, used: Tokens | null) {
-  const [now, { startedAt }] = await Promise.all([$.clock.now(), $.session.usage()])
+  const [now, snap] = await Promise.all([$.clock.now(), read($, snapshot)])
+  const startedAt = snap?.startedAt ?? 0
   if (agentId === undefined) {
-    await update($, lastTurn, () => ({ at: now, durationMs, model, tokens: used }))
+    // An interrupted turn reports no usage: the last counted one stays on show.
+    await update($, lastTurn, t => ({ at: now, durationMs, model, tokens: used ?? t?.tokens ?? null }))
   } else if (used !== null) {
-    await update($, agents, list => agentTokens(list, agentId, used, now))
+    await setAgents($, list => agentTokens(list, agentId, used, now))
   }
+  if (used === null) return
   await update($, totals, t => {
     const isSame = t?.since === startedAt
     return {
       since: startedAt,
       turns: (isSame ? t.turns : 0) + (agentId === undefined ? 1 : 0),
-      tokens: addTokens(isSame ? t.tokens : NO_TOKENS, used ?? NO_TOKENS),
+      tokens: addTokens(isSame ? t.tokens : NO_TOKENS, used),
     }
   })
 }
 
 /** A tool call starts: it shows live, counts for the session and for its agent. */
 async function noteToolStart($: EngineInterface, call: LiveTool) {
-  const { startedAt } = await $.session.usage()
+  const snap = await read($, snapshot)
   await update($, live, list => startLive(list, call))
-  await update($, tools, counts => countTool(counts, call.tool, startedAt))
+  await update($, tools, counts => countTool(counts, call.tool, snap?.startedAt ?? 0))
   const agentId = call.agentId
-  if (agentId !== null) await update($, agents, list => agentTool(list, agentId, call.startedAt))
+  if (agentId !== null) await setAgents($, list => agentTool(list, agentId, call.startedAt))
 }
 
 /** Ends a background shell or agent by its id, as a notification or a TaskStop reports it. */
 async function noteEnded($: EngineInterface, id: string, status: RunStatus) {
   const now = await $.clock.now()
-  await update($, shells, list => endRun(list, id, status, now))
-  await update($, agents, list => endRun(list, id, status, now))
+  await setShells($, list => endRun(list, id, status, now))
+  await setAgents($, list => endRun(list, id, status, now))
 }
 
-/** Advances the spinner while something runs, so elapsed times and spinners move. */
-async function tickIfBusy($: EngineInterface) {
+/** Redraws once a second while something runs, so spinners and elapsed times move; idle, nothing. */
+async function tick($: EngineInterface) {
   const [running, agentList, shellList] = await Promise.all([read($, live), read($, agents), read($, shells)])
-  if (isBusy(running, agentList, shellList)) await update($, tick, t => t + 1)
+  if (isBusy(running, agentList, shellList)) $.ui.invalidate('ui.render')
 }
 
 /** Everything a drawing reads, at one moment. */
-async function gather($: EngineInterface, els: Els, room: number, isWorking: boolean, cacheTtlMs: number) {
+async function gather($: EngineInterface, canvas: Canvas, room: number, rows: number, isWorking: boolean, cacheTtlMs: number) {
   const snap = await read($, snapshot)
   if (snap === null) return null
-  const [now, frame, turn, sessionTotals, compacted, level, agentList, shellList, running, toolCounts] = await Promise.all([
+  const [now, turn, sessionTotals, compacted, level, agentList, shellList, running, toolCounts, past, problem] = await Promise.all([
     $.clock.now(),
-    read($, tick),
     read($, lastTurn),
     read($, totals),
     read($, compactions),
@@ -144,13 +236,15 @@ async function gather($: EngineInterface, els: Els, room: number, isWorking: boo
     read($, shells),
     read($, live),
     read($, tools),
+    read($, history),
+    read($, historyProblem),
   ])
   const input: BandInput = {
-    els,
+    canvas,
     room,
+    rows,
     isWorking,
     now,
-    tick: frame,
     snap,
     turn,
     totals: sessionTotals,
@@ -160,6 +254,8 @@ async function gather($: EngineInterface, els: Els, room: number, isWorking: boo
     shells: shellList,
     live: running,
     tools: toolCounts,
+    history: past,
+    historyProblem: problem,
     cacheTtlMs,
   }
   return input
@@ -181,19 +277,28 @@ export const register: Register = (on, options) => {
     const started = await next(e)
     await $.command.register({
       name: 'vitals',
-      description: 'Vitals: switch the band between full and compact, or "/vitals pane" for every agent and shell',
+      description: 'Vitals: full ↔ compact band · "/vitals pane" every agent and shell · "/vitals report" weekly and monthly usage',
     })
+    await restoreHistory($)
     await refresh($)
+    void refreshHistory($, false)
     $.clock.every(REFRESH_MS, () => void refresh($))
-    $.clock.every(TICK_MS, () => void tickIfBusy($))
+    $.clock.every(HISTORY_EVERY_MS, () => void refreshHistory($, false))
+    $.clock.every(TICK_MS, () => void tick($))
 
     return started
   })
 
   on('command.run', { command: 'vitals' }, async ($, e) => {
-    if (e.args.trim() === 'pane') {
-      await $.ui.open({ id: PANE_ID, title: PANE_TITLE })
+    const arg = e.args.trim()
+    if (arg === 'pane') {
+      await $.ui.open({ id: PANE_ID, title: 'Vitals · agents, shells, tokens' })
       return { text: 'Vitals pane opened.' }
+    }
+    if (arg === 'report') {
+      void refreshHistory($, true)
+      await $.ui.open({ id: REPORT_ID, title: 'Vitals · usage report' })
+      return { text: 'Vitals usage report opened; refreshing from ccusage.' }
     }
     const next = await update($, view, was => (was === 'full' ? 'compact' : 'full'))
 
@@ -207,9 +312,10 @@ export const register: Register = (on, options) => {
     return attached
   })
 
+  // A measurement carries the context, the limits and the cost: drawn as they come, no call made.
   on('session.measure', async ($, e, next) => {
     const measured = await next(e)
-    await refresh($)
+    await applyMeasure($, e, await $.clock.now())
 
     return measured
   })
@@ -289,13 +395,18 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     if (e.trigger === 'precompute' || e.agentId || result.messages === undefined) return result
 
-    const { startedAt } = await $.session.usage()
+    const [now, snap] = await Promise.all([$.clock.now(), read($, snapshot)])
+    const startedAt = snap?.startedAt ?? 0
     await update($, compactions, c => ({
       since: startedAt,
       count: (c?.since === startedAt ? c.count : 0) + 1,
       before: result.tokensBefore ?? null,
       after: result.tokensAfter ?? null,
+      at: now,
+      trigger: e.trigger,
     }))
+    // The window and the threshold may have moved: read them again on the next refresh.
+    breakdownAt = 0
 
     return result
   }).catch(($, e, next) => next(e))
@@ -303,17 +414,25 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
 
-    const input = await gather($, $.ui.resolve(e), e.props.bodyColumns, e.props.isWorking, cacheTtlMs)
+    const canvas = { els: $.ui.resolve(e), surface: e.surface }
+    const input = await gather($, canvas, e.props.bodyColumns, e.props.maxRows, e.props.isWorking, cacheTtlMs)
     if (input === null) return next(e)
 
-    return (await read($, view)) === 'compact' ? drawCompact(input) : drawBand(input, BAND)
+    return (await read($, view)) === 'compact' ? drawCompact(input) : drawBand(input, MAX_BAND_ROWS)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
-    const els = $.ui.resolve(e)
-    const input = await gather($, els, e.props.bodyColumns, false, cacheTtlMs)
-    if (input === null) return <els.Text dimColor>{'Waiting for the first measurement…'}</els.Text>
+    const canvas = { els: $.ui.resolve(e), surface: e.surface }
+    const input = await gather($, canvas, e.props.bodyColumns, 1000, false, cacheTtlMs)
+    if (input === null) return <canvas.els.Text dimColor>{'Waiting for the first measurement…'}</canvas.els.Text>
 
-    return drawBand({ ...input, isWorking: input.live.length > 0 }, PANE)
+    return drawAll({ ...input, isWorking: input.live.length > 0 })
+  })
+
+  on('ui.render', { component: 'Pane', requestId: REPORT_ID }, async ($, e) => {
+    const canvas = { els: $.ui.resolve(e), surface: e.surface }
+    const [now, past, problem] = await Promise.all([$.clock.now(), read($, history), read($, historyProblem)])
+
+    return drawReport(canvas, e.props.bodyColumns, now, past, problem)
   })
 }

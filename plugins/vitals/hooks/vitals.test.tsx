@@ -4,14 +4,19 @@ import type { Engine } from 'claude-code/testing'
 
 import { mergeRoster, parseNotification } from './collect'
 import { count, hitRate, prettyModel } from './format'
-import { fitColumns } from './ui'
+import { parseDaily, periods, weekStart } from './report'
+import { blocks, cellWidth, fitColumns } from './ui'
+
+// Thursday 8 October 2026, noon local; the session began 16 minutes before.
+const NOW = new Date(2026, 9, 8, 12).getTime()
+const STARTED = NOW - 16 * 60_000
 
 const PROPS = {
   hasSurvey: false,
   isWorking: false,
-  maxRows: 40,
-  bodyColumns: 130,
-  scroll: { offset: 0, bodyRows: 40 },
+  maxRows: 60,
+  bodyColumns: 140,
+  scroll: { offset: 0, bodyRows: 60 },
   view: {},
 }
 
@@ -33,18 +38,53 @@ const AGENT_USAGE = {
 
 const ROSTER = [{ id: 'a1', description: 'Review the diff', type: 'pr-review:code-reviewer', status: 'running' as const }]
 
+const day = (date: string, cost: number, model = 'claude-opus-5-5') => ({
+  date,
+  inputTokens: 1000,
+  outputTokens: 2000,
+  cacheCreationTokens: 3000,
+  cacheReadTokens: 94_000,
+  totalTokens: 100_000,
+  totalCost: cost,
+  modelBreakdowns: [{ modelName: model, cost, inputTokens: 1000, outputTokens: 2000, cacheReadTokens: 94_000, cacheCreationTokens: 3000 }],
+})
+
+// Monday 5 to Thursday 8 October against Monday 28 September to Thursday 1 October.
+const CCUSAGE = JSON.stringify({
+  daily: [
+    day('2026-09-28', 10),
+    day('2026-09-29', 10),
+    day('2026-10-01', 20),
+    day('2026-10-02', 99),
+    day('2026-10-05', 30),
+    day('2026-10-07', 20, 'claude-sonnet-5-5'),
+    day('2026-10-08', 50),
+  ],
+})
+
 // What the engine answers beneath the mod: a session on main with two changed files, 680k of a
-// 1M window, both plan limits, $4.21 spent, effort high in /config and one running subagent.
+// 1M window auto-compacting at 900k, both plan limits, $4.21 spent, effort high in /config, one
+// running subagent and ccusage's daily report.
 const fakeEngine = (on: On, toasts: string[] = []) => {
   on('ui.toast', ($, e) => {
     toasts.push(e.text)
     return { value: undefined }
   })
   on('ui.open', () => ({ value: { isPlaced: true as const } }))
-  on('session.usage', () => ({
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', () => ({ value: undefined }))
+  on('session.usage', ($, e) => ({
     value: {
-      startedAt: 0,
-      context: { tokens: 680_000, window: 1_000_000, percent: 68 },
+      startedAt: STARTED,
+      context: {
+        tokens: 680_000,
+        window: 1_000_000,
+        percent: 68,
+        ...(e.breakdown === undefined
+          ? {}
+          : { breakdown: { isAutoCompactEnabled: true, rawMaxTokens: 1_000_000, autoCompactThreshold: 900_000 } as never }),
+      },
       rateLimits: [
         { kind: 'five_hour', percentUsed: 42 },
         { kind: 'seven_day', percentUsed: 85 },
@@ -56,22 +96,18 @@ const fakeEngine = (on: On, toasts: string[] = []) => {
   on('session.turns', () => ({ value: 12 }))
   on('session.model', () => ({ value: 'claude-opus-5-5[1m]' }))
   on('agent.list', () => ({ value: ROSTER }))
-  on('clock.now', () => ({ value: 1_000_000 }))
+  on('clock.now', () => ({ value: NOW }))
   on('clock.every', () => ({ value: undefined }))
   on('clock.after', () => ({ value: undefined }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('config.list', () => ({
     value: [{ key: 'effort', label: 'Effort', kind: 'choice' as const, value: 'high', provider: { plugin: 'core', tier: 'core' as const }, isLocked: false }],
   }))
-  on('process.run', ($, e) => ({
-    value: {
-      exitCode: 0,
-      stdout: e.argv[1] === 'status' ? '# branch.head main\n1 .M N... a\n1 .M N... b' : '.git\n.git',
-      stderr: '',
-      isStdoutTruncated: false,
-      isStderrTruncated: false,
-    },
-  }))
+  on('process.run', ($, e) => {
+    const stdout =
+      e.argv[0] === 'ccusage' ? CCUSAGE : e.argv[1] === 'status' ? '# branch.head main\n1 .M N... a\n1 .M N... b' : '.git\n.git'
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('turn.complete', ($, e) => ({ text: e.answer, usage: e.usage }))
   on('turn.step', async function* ($, e) {
@@ -87,9 +123,12 @@ const drain = async (stream: AsyncIterable<unknown>) => {
   for await (const _chunk of stream) void _chunk
 }
 
-/** A session: one main turn, a Sonnet subagent at medium effort, and a dev server in the background. */
+const COMMAND = { origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 140 } }
+
+/** A session: one main turn, a Sonnet subagent at medium effort, a dev server in the background. */
 const runSession = async ($: Engine) => {
   await $.session.start({ cwd: '/work/cc-vitals', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'vitals', args: 'report', ...COMMAND })
   await drain($.turn.step({ turnId: 't1', index: 0, model: 'claude-opus-5-5', effort: 'high', messageCount: 3 }))
   await drain($.turn.step({ turnId: 't2', index: 0, model: 'claude-sonnet-5-5', effort: 'medium', messageCount: 1, agentId: 'a1' }))
   await $.turn.complete({ answer: '', durationMs: 40_000, isAborted: false, turnId: 't2', usage: AGENT_USAGE, reason: 'answer', agentId: 'a1' })
@@ -97,8 +136,8 @@ const runSession = async ($: Engine) => {
   await $.turn.complete({ answer: 'ok', durationMs: 12_000, isAborted: false, turnId: 't1', usage: MAIN_USAGE, reason: 'answer' })
 }
 
-const bandText = async ($: Engine, surface: 'terminal' | 'desktop') => {
-  const ui = await $.ui.mount({ plugin: 'vitals', surface, component: 'AbovePrompt', props: PROPS })
+const bandText = async ($: Engine, surface: 'terminal' | 'desktop', props = PROPS) => {
+  const ui = await $.ui.mount({ plugin: 'vitals', surface, component: 'AbovePrompt', props })
   return (await ui.find({ text: /./ }))?.text ?? ''
 }
 
@@ -120,8 +159,19 @@ test('token counts shorten', () => {
   expect(count(12_340_000)).toBe('12.3M')
 })
 
+test('emoji take two cells, box drawing one', () => {
+  expect(cellWidth('── 🔥 TOKENS')).toBe(12)
+  expect(cellWidth('⚡ HIGH')).toBe(7)
+})
+
+test('bars resolve to an eighth of a cell', () => {
+  expect(blocks(50, 10)).toEqual({ filled: '█████', track: '░░░░░' })
+  expect(blocks(55, 10)).toEqual({ filled: '█████▌', track: '░░░░' })
+})
+
 test('a task notification names each task and how it ended', () => {
-  const text = '<task-notification><task-id>b8f2</task-id><status>completed</status></task-notification>' +
+  const text =
+    '<task-notification><task-id>b8f2</task-id><status>completed</status></task-notification>' +
     '<task-notification><task-id>b9a0</task-id><status>killed</status></task-notification>'
   expect(parseNotification(text)).toEqual([
     { id: 'b8f2', status: 'completed' },
@@ -135,52 +185,79 @@ test('an agent the roster no longer lists has ended', () => {
   expect(mergeRoster(merged, [], 20)[0]).toMatchObject({ status: 'completed', endedAt: 20 })
 })
 
-test('narrow tables drop their lowest-priority columns first', () => {
+test('narrow tables drop their lowest-priority columns first, the growing one takes the rest', () => {
   const columns = [
-    { title: 'A', width: 10 },
+    { title: 'A', width: 10, grow: true },
     { title: 'B', width: 10, priority: 2 },
     { title: 'C', width: 10, priority: 1 },
   ]
-  expect(fitColumns(columns, 30).map(c => c.title)).toEqual(['A', 'B', 'C'])
-  expect(fitColumns(columns, 20).map(c => c.title)).toEqual(['A', 'B'])
+  expect(fitColumns(columns, 40).map(c => [c.title, c.width])).toEqual([['A', 14], ['B', 10], ['C', 10]])
+  expect(fitColumns(columns, 23).map(c => c.title)).toEqual(['A', 'B'])
   expect(fitColumns(columns, 5).map(c => c.title)).toEqual(['A'])
 })
 
+test('ccusage days fold into today, week and month against the same days before', () => {
+  const days = parseDaily(CCUSAGE)
+  expect(days?.length).toBe(7)
+  expect(parseDaily('not json')).toBe(null)
+  expect(weekStart('2026-10-08')).toBe('2026-10-05')
+  const [today, week, month] = periods(days ?? [], '2026-10-08')
+  expect(today?.now.costUsd).toBe(50)
+  expect(week?.now.costUsd).toBe(100)
+  expect(week?.before?.costUsd).toBe(40) // Mon 28 Sep to Thu 1 Oct, not Fri 2 Oct's 99
+  expect(month?.now.costUsd).toBe(219)
+  expect(month?.before?.costUsd).toBe(0) // 1 to 8 September: the September days on record are later
+})
+
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`${surface}: the dashboard shows tokens, every agent's model and effort, and shells`, async ($, on) => {
+  test(`${surface}: the dashboard shows tokens, agents with model and effort, shells, compaction and usage`, async ($, on) => {
     fakeEngine(on)
     await runSession($)
 
     const band = await bandText($, surface)
     const expected = [
       '◆ VITALS',
+      '🧠 ',
       'Opus 5.5 1M',
-      'effort',
-      'high',
-      '📁 cc-vitals  ⎇ main ●2',
-      '$4.21',
-      'CTX',
+      'HIGH',
+      '▰▰▰▱▱',
+      '📁 cc-vitals  🌿 main ●2',
+      '💸 $4.21',
+      '⛽ CTX',
       '68%',
-      '7D',
+      '📅 7D',
       '85%',
-      'TOKENS',
+      '🔥 TOKENS',
       'CACHE R',
       '640k',
       '97%',
-      'AGENTS',
-      'main',
+      '🤖 AGENTS',
       'Review the diff',
       'code-reviewer',
       'Sonnet 5.5',
       'medium',
-      'SHELLS',
-      'b8f2',
-      '$ Start the dev server',
-      'running',
-      'TOOLS',
+      '🐚 SHELLS',
+      'Start the dev server',
+      '🗜  COMPACT',
+      'auto at 90% (900k)',
+      '220k to go',
+      '📊 USAGE',
+      'week',
+      '$100',
+      '▲ +150%',
+      '🔧 TOOLS',
       'Bash 1',
     ]
     for (const text of expected) expect(band).toContain(text)
+  })
+
+  test(`${surface}: a short band gives every section one line instead of scrolling`, async ($, on) => {
+    fakeEngine(on)
+    await runSession($)
+
+    const band = await bandText($, surface, { ...PROPS, maxRows: 12, scroll: { offset: 0, bodyRows: 12 } })
+    for (const text of ['🔥 TOKENS', '🤖 AGENTS', '📊 USAGE', '🐚 SHELLS', 'hit 97%']) expect(band).toContain(text)
+    expect(band).not.toContain('CACHE R')
   })
 
   test(`${surface}: a task notification ends the shell it names`, async ($, on) => {
@@ -198,13 +275,30 @@ for (const surface of ['terminal', 'desktop'] as const) {
   test(`${surface}: /vitals switches to one compact line`, async ($, on) => {
     fakeEngine(on)
     await runSession($)
-    await $.command.run({ command: 'vitals', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await $.command.run({ command: 'vitals', args: '', ...COMMAND })
 
     const band = await bandText($, surface)
-    expect(band).toContain('◆ Opus 5.5 1M · effort high · ctx 68% · 5h 42% · 7d 85% · hit 97% · $4.21')
+    expect(band).toContain('🧠 Opus 5.5 1M · ⚡ high · ⛽ 68% · ⏳ 42% · 📅 85% · 🧊 97% · 💸 $4.21 · 📊 week $100')
     expect(band).not.toContain('AGENTS')
   })
+
+  test(`${surface}: /vitals report draws days, weeks, months and models`, async ($, on) => {
+    fakeEngine(on)
+    await runSession($)
+
+    const ui = await $.ui.mount({ plugin: 'vitals', surface, component: 'Pane', requestId: 'vitals-report', props: { title: 'r', isFocused: false, bodyColumns: 120, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 60 }, view: {} } })
+    const pane = (await ui.find({ text: /./ }))?.text ?? ''
+    for (const text of ['📊 USAGE REPORT', 'Thu 10-08 ◀', '$50.00', 'this week', 'Oct 2026 (so far)', 'Sonnet 5.5']) expect(pane).toContain(text)
+  })
 }
+
+test('an interrupted turn keeps the last counted tokens on show', async ($, on) => {
+  fakeEngine(on)
+  await runSession($)
+  await $.turn.complete({ answer: '', durationMs: 1000, isAborted: true, turnId: 't3', reason: 'aborted' })
+
+  expect(await bandText($, 'terminal')).toContain('640k')
+})
 
 test('a plan limit past 80% raises one toast', async ($, on) => {
   const toasts: string[] = []
@@ -212,12 +306,4 @@ test('a plan limit past 80% raises one toast', async ($, on) => {
   await runSession($)
 
   expect(toasts).toEqual(['Weekly usage limit at 85%'])
-})
-
-test('/vitals pane opens the full history', async ($, on) => {
-  fakeEngine(on)
-  await runSession($)
-  const answer = await $.command.run({ command: 'vitals', args: 'pane', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
-
-  expect(answer).toMatchObject({ text: 'Vitals pane opened.' })
 })

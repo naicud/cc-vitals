@@ -101,4 +101,20 @@ export const shortType = (type: string) => type.split(':').pop() || type
 /** One line of a shell command, its whitespace folded. */
 export const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
 
-export type Part = { text: string; color?: string; emphasis?: 'warning' | 'strong' | 'plain' }
+/** Dollars as a glance reads them: `$9.23`, `$118`, `$4.4k`. */
+export const money = (usd: number) =>
+  usd >= 1000 ? `$${+(usd / 1000).toFixed(1)}k` : usd >= 100 ? `$${Math.round(usd)}` : `$${usd.toFixed(2)}`
+
+const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
+
+/** The effort as pips out of five: `high` → `▰▰▰▱▱`; a numeric budget draws none. */
+export const effortPips = (level: string) => {
+  const i = LEVELS.indexOf(level)
+  return i < 0 ? '' : '▰'.repeat(i + 1) + '▱'.repeat(LEVELS.length - i - 1)
+}
+
+/** A change as an arrow and a signed percentage, or empty with nothing to compare against. */
+export const delta = (percent: number | null) =>
+  percent === null ? '' : percent > 0 ? `▲ +${percent}%` : percent < 0 ? `▼ ${percent}%` : '= 0%'
+
+export type Part ={ text: string; color?: string; emphasis?: 'warning' | 'strong' | 'plain' }

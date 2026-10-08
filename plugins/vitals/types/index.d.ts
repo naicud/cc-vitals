@@ -18,6 +18,8 @@ export type Snapshot = {
   contextWindow: number
   costUsd: number | null
   limits: Limit[]
+  /** The token count auto-compaction runs at, or null when it is off or not read yet. */
+  autoCompactAt: number | null
 }
 
 export type TurnStat = {
@@ -29,7 +31,15 @@ export type TurnStat = {
 
 export type Totals = { since: number; turns: number; tokens: Tokens }
 
-export type Compactions = { since: number; count: number; before: number | null; after: number | null }
+export type Compactions = {
+  since: number
+  count: number
+  before: number | null
+  after: number | null
+  /** When the last one finished, and what started it (`auto`, `manual`, `plugin`). */
+  at: number | null
+  trigger: string | null
+}
 
 /** Where a subagent or a background shell stands, as the band draws it. */
 export type RunStatus = 'running' | 'waiting' | 'completed' | 'failed' | 'killed'
@@ -66,6 +76,27 @@ export type ToolCounts = { since: number; counts: ToolCount[] }
 
 export type View = 'full' | 'compact'
 
+/** One model's share of a day, as ccusage prices it. */
+export type ModelDay = { model: string; costUsd: number; tokens: number }
+
+/** One local day of Claude Code usage across every session on this machine. */
+export type DayUsage = {
+  date: string
+  costUsd: number
+  tokens: number
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  models: ModelDay[]
+}
+
+/** The daily history the usage section and the report pane read: when it was read and the days. */
+export type UsageHistory = { at: number; days: DayUsage[] }
+
+/** Why the history could not be read this time; the last good one stays drawn. */
+export type HistoryProblem = { at: number; reason: string }
+
 declare module 'claude-code' {
   interface PluginState {
     vitals: {
@@ -80,7 +111,8 @@ declare module 'claude-code' {
       shells: ShellStat[]
       live: LiveTool[]
       tools: ToolCounts | null
-      tick: number
+      history: UsageHistory | null
+      historyProblem: HistoryProblem | null
     }
   }
 }

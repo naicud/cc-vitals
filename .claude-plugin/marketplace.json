@@ -9,8 +9,8 @@
     {
       "name": "vitals",
       "source": "./plugins/vitals",
-      "description": "A framed live dashboard above the prompt, in the terminal and in the desktop app: model and effort, context and plan limits, cost, tokens and cache per turn and session, every subagent with its model, effort and tokens, background shells and live tools. Requires Claude Code v2.1.287+. Zero network.",
-      "version": "0.2.0",
+      "description": "A light, framed live dashboard above the prompt, terminal and desktop: model and effort, context and plan limits, cost and burn rate, tokens and cache, auto-compaction, subagents with model and effort, background shells, live tools, weekly and monthly usage. Requires Claude Code v2.1.287+.",
+      "version": "0.3.0",
       "homepage": "https://github.com/naicud/cc-vitals",
       "category": "analytics",
       "author": {
