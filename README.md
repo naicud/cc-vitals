@@ -5,31 +5,31 @@
 Model and reasoning effort, context and plan limits, cost and burn rate, tokens and cache per turn and session, auto-compaction, every subagent with its own model and effort, background shells, the tool running right now, and your weekly and monthly spend.
 
 ```
-╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ◆ VITALS   🧠 Opus 5.5 1M   ⚡ HIGH ▰▰▰▱▱                           📁 cc-vitals  🌿 main ●2   ⏳ 1h 8m · 6 prompts   💸 $14.57  🔥 $12.68/h │
-│ ⛽ CTX ████████▊░░░░░░░░░░░░░░░  41% 409k/1M │ ⏳ 5H ████████▏░░░░░░░░░░░░░░░  37% ↻ 2h 30m │ 📅 7D ██▉░░░░░░░░░░░░░░░░░░░░  12% ↻ 6d 4h │
-│                                                                                                                                              │
-│ ── 🔥 TOKENS ─────────────────────────────────── 🧊 cache warm ──     ⠋ NOW      Bash 4s · Grep ‹code-reviewer›                               │
-│         │     IN │    OUT │ CACHE R │ CACHE W │  HIT │  TOTAL │ NOTE  🔧 TOOLS   Bash 25 · Write 7 · Edit 4 · ctx_execute 2                      │
-│ ────────┼────────┼────────┼─────────┼─────────┼──────┼────────┼───── │
-│ turn    │     76 │    80k │   13.5M │    118k │  99% │  13.7M │ 13m  ── 🐚 SHELLS ─────────────────────────────── 1 running · 2 done ──      │
-│ session │     76 │    80k │   13.5M │    118k │  99% │  13.7M │ 1 t     │ SHELL     │ COMMAND                     │ STATUS    │   TIME        │
-│                                                                      ──┼───────────┼─────────────────────────────┼───────────┼────────       │
-│ 🗜  COMPACT auto at 97% (967k) · 558k to go                         ⠋ │ b8f2      │ $ Start the dev server      │ running   │  3m12s        │
-│                                                                      ✓ │ b1a0      │ $ Run the test suite        │ completed │    45s        │
-│ ── 📊 USAGE ───────────────────────────────── ccusage · 13m ago ──                                                                             │
-│ PERIOD │    COST │  TOKENS │ VS BEFORE │ TOP MODELS                 ── 🤖 AGENTS ────────────────────────────── 1 running · 3 done ──        │
-│ ───────┼─────────┼─────────┼───────────┼────────────────────────      │ AGENT           │ MODEL       │ EFFORT │ TOKENS │  HIT │   TIME       │
-│ today  │    $132 │  392.9M │     ▼ -4% │ Opus 5.5 85% · Sonnet 5.5   ──┼─────────────────┼─────────────┼────────┼────────┼──────┼───────       │
-│ week   │    $491 │    1.4B │    ▼ -41% │ Opus 5.5 82% · Sonnet 5.5   ◆ │ main            │ Opus 5.5 1M │ high   │  13.7M │  99% │    1h       │
-│ month  │    $749 │    2.1B │  ▲ +2113% │ Opus 5.5 79% · Sonnet 5.5   ⠋ │ Review the diff │ Sonnet 5.5  │ medium │    47k │  87% │  1m20s       │
-│ 14 days  ▁▁▂▅█▃▁▁▂▁▁▁▃▂  peak $378 · /vitals report                  ✓ │ Explore auth    │ Haiku 5.5   │ low    │    12k │  88% │    40s       │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ◆ VITALS   🧠 Opus 5.5 1M   ⚡ HIGH ▰▰▰▱▱                     📁 cc-vitals  🌿 main ↓7   ⏳ 1h 20m · 7 prompts   💸 $16.18  🔥 $12.11/h │
+│ ⛽ CTX ████████▊░░░░░░░░ 44% 435k/1M │ 🗜 COMPACT █████████▏░░░░░░░ 45% 532k to go │ ⏳ 5H LIMIT ███████▏░░░░░░░░ 45% ↻ 2h 19m │ 📅 WEEKLY ██▏░░░░ 13% ↻ 6d 4h │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────────────────────────────╮  ╭─────────────────────────────────────────────────────────────────╮
+│ 🔥 TOKENS                     🧊 cache warm · expires in 54m     │  │ 🤖 AGENTS                               1 running · 2 done      │
+│         │   IN │  OUT │ CACHE R │ CACHE W │  HIT │  TOTAL │ NOTE │  │   │ AGENT           │ MODEL       │ EFFORT │ TOKENS │  HIT │ TIME  │
+│ ────────┼──────┼──────┼─────────┼─────────┼──────┼────────┼───── │  │ ──┼─────────────────┼─────────────┼────────┼────────┼──────┼────── │
+│ turn    │   22 │  19k │    4.7M │     24k │  99% │   4.7M │ 3m56 │  │ ◆ │ main            │ Opus 5.5 1M │ high   │  18.5M │  99% │ 1h 20 │
+│ session │   98 │  99k │   18.2M │    143k │  99% │  18.5M │ 2 tu │  │ ⠋ │ Review the diff │ Sonnet 5.5  │ medium │    47k │  87% │ 1m20s │
+╰─────────────────────────────────────────────────────────────────╯  │ ✓ │ Explore auth    │ Haiku 5.5   │ low    │    12k │  88% │   40s │
+╭─────────────────────────────────────────────────────────────────╮  ╰─────────────────────────────────────────────────────────────────╯
+│ 📊 USAGE                                      ccusage · 9m ago   │  ╭─────────────────────────────────────────────────────────────────╮
+│ PERIOD │  COST │  TOKENS │ VS BEFORE │ TOP MODELS                │  │ 🔧 TOOLS                       42 calls · 1 error · 1 running   │
+│ ───────┼───────┼─────────┼───────────┼────────────────────────── │  │   │ TOOL        │ CALLS │ ERR │ USE        │ NOW                 │
+│ today  │  $138 │  412.1M │    ▲ +1%  │ Opus 5.5 85% · Sonnet 5.5 │  │ ──┼─────────────┼───────┼─────┼────────────┼──────────────────── │
+│ week   │  $497 │    1.4B │   ▼ -41%  │ Opus 5.5 82% · Sonnet 5.5 │  │ ⠋ │ Bash        │    35 │   1 │ ██████████ │ 4s ‹code-reviewer›  │
+│ month  │  $755 │    2.1B │ ▲ +2130%  │ Opus 5.5 79% · Sonnet 5.5 │  │ · │ Write       │     7 │   0 │ ██         │                     │
+│ 14 days  ▁▁▂▅█▃▁▁▂▁▁▁▃▂  peak $378 · /vitals report             │  │ · │ Edit        │     4 │   0 │ █▏         │                     │
+╰─────────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────────────────────────────────╯
 ```
 
-On a terminal 150 columns wide or more the sections split in two columns: the numbers on the left (🔥 tokens, 🗜 compaction, 📊 usage), the work on the right with 🤖 agents at the bottom (live tools, 🐚 shells, agents). Narrower, they stack in one column in that order, agents last. A blank line separates the sections.
+Every part has its own box. ◆ VITALS sits on top across the whole width: the header and four bars, ⛽ CTX (context window), 🗜 COMPACT (how far the context is on its way to auto-compaction), ⏳ 5H LIMIT and 📅 WEEKLY (plan limits). Under it, on a terminal 150 columns wide or more, two columns: 🔥 TOKENS and 📊 USAGE on the left, 🤖 AGENTS, 🔧 TOOLS and 🐚 SHELLS on the right, agents on top. Narrower, one column: tokens, agents, tools, shells, usage.
 
-The band never scrolls (at most 32 rows). Every section gets one line first, then the most important ones grow to their full table while they fit: tokens, agents, live, compaction, usage, shells. A short terminal, or one where Claude's progress takes the space, gets one line each instead of losing sections off the bottom.
+The band never scrolls (at most 40 rows). Every section gets one line first, then the most important ones grow to their full box while they fit: tokens, agents, tools, usage, shells. A short terminal, or one where Claude's progress takes the space, gets one line each instead of losing sections off the bottom.
 
 Commands:
 
@@ -43,11 +43,10 @@ Commands:
 | Section | Contents |
 | :-- | :-- |
 | Header | 🧠 model, ⚡ the reasoning effort the last request used (pips out of five), 📁 folder, 🌿 branch (🌳 in a worktree), ahead/behind, changed files, ⏳ session age, prompts, 💸 cost, 🔥 burn rate per hour |
-| Meters | ⛽ context window (against the auto-compact window when one is set, as `/context` does), ⏳ 5-hour and 📅 weekly plan limits with reset countdowns; bars at an eighth of a cell |
-| 🔥 Tokens | Last main turn and whole session (subagents included): in, out, cache read, cache write, hit rate, total; idle time, 🧊 cache warm or 🥶 cold past the prompt-cache TTL. An interrupted turn keeps the last counted one on show |
+| Meters | ⛽ CTX, the context window (against the auto-compact window when one is set, as `/context` does); 🗜 COMPACT, the context against the auto-compact threshold, tokens left and compactions so far; ⏳ 5H LIMIT and 📅 WEEKLY plan limits with reset countdowns. Bars at an eighth of a cell, two to a row when the terminal is narrow |
+| 🔥 Tokens | Last main turn and whole session (subagents included): in, out, cache read, cache write, hit rate, total; idle time, 🧊 cache warm with the time until it expires, or 🥶 cold past the prompt-cache TTL. An interrupted turn keeps the last counted one on show |
 | 🤖 Agents | The main loop and every subagent: status (spinner while it runs, ✓ ✗ ■ when it ended), task, type, the model and effort its requests actually used, tokens, hit rate, tool calls, time. Ended ones stay, dimmed, until newer ones push them out |
-| Live | Tool calls in flight with elapsed time and the agent running them; the session's most used tools |
-| 🗜 Compact | Where auto-compaction triggers and how many tokens are left, how many compactions this session, the last one's before → after and saving, its trigger and when |
+| 🔧 Tools | One row per tool the session called: a spinner while one runs, calls, errors, a bar of its share of the calls, and what runs now (elapsed, how many at once, which agent). MCP tools by their short name |
 | 📊 Usage | Today, this week (Monday first) and this month across every Claude Code session on the machine, each against the same days of the period before, the top models, a 14-day sparkline |
 | 🐚 Shells | Background shells: id, command, which agent started it, status, time. Ended by the task notification or a TaskStop |
 
@@ -143,10 +142,11 @@ plugins/vitals/
   .claude-plugin/plugin.json      manifest and the cache_ttl option
   hooks/register.tsx              hooks, state atoms, refresh cadence, /vitals, render entries
   hooks/collect.ts                pure folds: place, meters, agents, shells, tool counts
-  hooks/band.tsx                  the dashboard sections and their row-budget layout
+  hooks/band.tsx                  the vitals box, the meters and the row-budget layout
+  hooks/sections.tsx              the section boxes: tokens, agents, tools, shells, usage
   hooks/report.ts                 ccusage parsing and day/week/month folds
   hooks/report-view.tsx           the /vitals report pane
-  hooks/ui.tsx                    rules, ruled tables, meters, bars, sparklines
+  hooks/ui.tsx                    boxes, rules, ruled tables, meters, bars, sparklines
   hooks/format.ts                 number, model, status and token formatting
   hooks/vitals.test.tsx           tests against the engine's test kit
   types/index.d.ts                $.state contract

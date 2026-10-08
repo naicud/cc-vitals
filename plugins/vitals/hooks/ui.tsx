@@ -1,4 +1,4 @@
-import type { Elements, RenderSurface } from 'claude-code'
+import type { Elements, RenderChildren, RenderSurface } from 'claude-code'
 
 import { tone } from './format'
 import type { Part } from './format'
@@ -100,6 +100,28 @@ export const table = (els: Els, columns: Column[], rows: Record<string, Cell>[],
     </Box>
   )
 }
+
+/**
+ * A section's own box: a rounded border `room` cells wide, the title (accent) and a dim note on its
+ * first row, the body under them laid out in `room - 4` cells.
+ */
+export const card = (els: Els, title: string, note: string, room: number, body: RenderChildren, borderColor = 'subtle') => {
+  const { Box, Text } = els
+  return (
+    <Box flexDirection="column" width={room} flexShrink={0} borderStyle="round" borderColor={borderColor} paddingX={1}>
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text bold color={ACCENT}>{title}</Text>
+        {note !== '' && <Text dimColor wrap="truncate-end">{note}</Text>}
+      </Box>
+      {body}
+    </Box>
+  )
+}
+
+/** Cells a card leaves its body: the border and one cell of padding on each side. */
+export const CARD_CELLS = 4
+/** Rows a card adds around its body: the border and the title row. */
+export const CARD_ROWS = 3
 
 /** A section rule across the frame: `── 🔥 TOKENS ─────────── note ──`. */
 export const rule = (els: Els, title: string, note: string, room: number) => {

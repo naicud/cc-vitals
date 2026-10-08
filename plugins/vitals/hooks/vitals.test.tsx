@@ -226,7 +226,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '💸 $4.21',
       '⛽ CTX',
       '68%',
-      '📅 7D',
+      '⏳ 5H LIMIT',
+      '📅 WEEKLY',
       '85%',
       '🔥 TOKENS',
       'CACHE R',
@@ -239,15 +240,16 @@ for (const surface of ['terminal', 'desktop'] as const) {
       'medium',
       '🐚 SHELLS',
       'Start the dev server',
-      '🗜  COMPACT',
-      'auto at 90% (900k)',
+      '🗜 COMPACT',
+      '76%',
       '220k to go',
       '📊 USAGE',
       'week',
       '$100',
       '▲ +150%',
       '🔧 TOOLS',
-      'Bash 1',
+      'CALLS',
+      '1 calls · 0 errors',
     ]
     for (const text of expected) expect(band).toContain(text)
   })
@@ -256,17 +258,18 @@ for (const surface of ['terminal', 'desktop'] as const) {
     fakeEngine(on)
     await runSession($)
 
-    const band = await bandText($, surface, { ...PROPS, maxRows: 16, scroll: { offset: 0, bodyRows: 16 } })
+    const band = await bandText($, surface, { ...PROPS, maxRows: 10, scroll: { offset: 0, bodyRows: 10 } })
     for (const text of ['🔥 TOKENS', '🤖 AGENTS', '📊 USAGE', '🐚 SHELLS', 'hit 97%']) expect(band).toContain(text)
     expect(band).not.toContain('CACHE R')
   })
 
-  test(`${surface}: one column draws the agents last, below the usage`, async ($, on) => {
+  test(`${surface}: one column draws the agents right under the tokens, the usage last`, async ($, on) => {
     fakeEngine(on)
     await runSession($)
 
     const band = await bandText($, surface)
-    expect(band.indexOf('🤖 AGENTS')).toBeGreaterThan(band.indexOf('📊 USAGE'))
+    expect(band.indexOf('🤖 AGENTS')).toBeGreaterThan(band.indexOf('🔥 TOKENS'))
+    expect(band.indexOf('🤖 AGENTS')).toBeLessThan(band.indexOf('📊 USAGE'))
     expect(band).toContain('Review the diff')
   })
 

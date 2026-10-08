@@ -119,9 +119,13 @@ export const countTool = (counts: ToolCounts | null, tool: string, since: number
   const found = list.find(c => c.tool === tool)
   return {
     since,
-    counts: found ? list.map(c => (c === found ? { ...c, count: c.count + 1 } : c)) : [...list, { tool, count: 1 }],
+    counts: found ? list.map(c => (c === found ? { ...c, count: c.count + 1 } : c)) : [...list, { tool, count: 1, errors: 0 }],
   }
 }
+
+/** One more failed call of `tool`, counted when its result came back as an error. */
+export const countError = (counts: ToolCounts | null, tool: string, since: number): ToolCounts | null =>
+  counts?.since === since ? { since, counts: counts.counts.map(c => (c.tool === tool ? { ...c, errors: (c.errors ?? 0) + 1 } : c)) } : counts
 
 export const startLive = (list: LiveTool[], call: LiveTool) => [...list.filter(t => t.id !== call.id), call].slice(-20)
 

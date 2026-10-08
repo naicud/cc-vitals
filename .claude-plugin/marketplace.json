@@ -10,7 +10,7 @@
       "name": "vitals",
       "source": "./plugins/vitals",
       "description": "A light, framed live dashboard above the prompt, terminal and desktop: model and effort, context and plan limits, cost and burn rate, tokens and cache, auto-compaction, live tools, shells and subagents with model and effort, weekly and monthly usage. Requires Claude Code v2.1.287+ and ccusage (npm i -g ccusage).",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "homepage": "https://github.com/naicud/cc-vitals",
       "category": "analytics",
       "author": {

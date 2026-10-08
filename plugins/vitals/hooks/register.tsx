@@ -11,6 +11,7 @@ import {
   agentTool,
   compactionOf,
   configuredEffort,
+  countError,
   countTool,
   endRun,
   isBusy,
@@ -49,7 +50,7 @@ const GIT_EVERY_MS = 20_000
 const BREAKDOWN_EVERY_MS = 5 * 60_000
 const HISTORY_EVERY_MS = 15 * 60_000
 const TICK_MS = 1000
-const MAX_BAND_ROWS = 32
+const MAX_BAND_ROWS = 40
 const PANE_ID = 'vitals'
 const REPORT_ID = 'vitals-report'
 const HISTORY_KEY = 'history'
@@ -339,7 +340,12 @@ export const register: Register = (on, options) => {
   on('tool.call', async ($, e, next) => {
     await noteToolStart($, { id: e.tool_use_id, tool: e.tool, agentId: e.agentId ?? null, startedAt: await $.clock.now() })
     try {
-      return await next(e)
+      const ran = await next(e)
+      if (ran.isError === true) {
+        const snap = await read($, snapshot)
+        await update($, tools, counts => countError(counts, e.tool, snap?.startedAt ?? 0))
+      }
+      return ran
     } finally {
       await update($, live, list => list.filter(t => t.id !== e.tool_use_id))
     }

@@ -70,7 +70,7 @@ export type ShellStat = {
 /** A tool call in flight: drawn live with its elapsed time. */
 export type LiveTool = { id: string; tool: string; agentId: string | null; startedAt: number }
 
-export type ToolCount = { tool: string; count: number }
+export type ToolCount = { tool: string; count: number; errors: number }
 
 export type ToolCounts = { since: number; counts: ToolCount[] }
 
