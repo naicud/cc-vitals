@@ -1,6 +1,6 @@
 import type { ModelUsage } from 'claude-code'
 
-import type { Tokens } from '../types'
+import type { RunStatus, Tokens } from '../types'
 
 export const NO_TOKENS: Tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 
@@ -18,6 +18,9 @@ export const addTokens = (a: Tokens, b: Tokens): Tokens => ({
   cacheWrite: a.cacheWrite + b.cacheWrite,
 })
 
+/** Everything the requests sent and got back: uncached, cache read and written, output. */
+export const totalTokens = (t: Tokens) => t.input + t.cacheRead + t.cacheWrite + t.output
+
 // Share of the prompt the cache served: read over everything sent (uncached, written, read).
 export const hitRate = (t: Tokens) => {
   const sent = t.input + t.cacheRead + t.cacheWrite
@@ -30,10 +33,10 @@ export const count = (n: number) =>
 export const tone = (percent: number) => (percent >= 95 ? 'error' : percent >= 80 ? 'warning' : undefined)
 
 const LABELS: Record<string, string> = { five_hour: '5-hour', seven_day: 'Weekly' }
-const SHORT_LABELS: Record<string, string> = { five_hour: '5h', seven_day: '7d' }
+const SHORT_LABELS: Record<string, string> = { five_hour: '5H', seven_day: '7D' }
 
 export const limitLabel = (kind: string) => LABELS[kind] ?? kind.replace(/_/g, ' ')
-export const limitShortLabel = (kind: string) => SHORT_LABELS[kind] ?? kind.replace(/_/g, ' ')
+export const limitShortLabel = (kind: string) => SHORT_LABELS[kind] ?? kind.replace(/_/g, ' ').toUpperCase()
 
 // `claude-opus-5-5[1m]` → `Opus 5.5 1M`; a display name such as `Opus 5.5` passes unchanged.
 export const prettyModel = (id: string) => {
@@ -54,10 +57,10 @@ export const until = (iso: string, now: number) => {
 }
 
 export const elapsed = (ms: number) => {
-  const s = Math.round(ms / 1000)
+  const s = Math.max(0, Math.round(ms / 1000))
   if (s < 60) return `${s}s`
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+  if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`
+  return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`
 }
 
 export const ago = (ms: number) => {
@@ -68,16 +71,34 @@ export const ago = (ms: number) => {
   return `${Math.floor(minutes / 1440)}d ${Math.floor((minutes % 1440) / 60)}h`
 }
 
-export type Part = { text: string; emphasis?: 'warning' | 'strong' }
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
-// The token figures of a turn or a session, as band parts: in, out, cache read/write, hit rate.
-export const tokenParts = (t: Tokens): Part[] => {
-  const hit = hitRate(t)
-  return [
-    { text: `in ${count(t.input)}` },
-    { text: `out ${count(t.output)}` },
-    { text: `cache read ${count(t.cacheRead)}` },
-    { text: `write ${count(t.cacheWrite)}` },
-    ...(hit === null ? [] : [{ text: `hit ${hit}%`, emphasis: hit < 50 ? ('warning' as const) : undefined }]),
-  ]
+/** The glyph and colour of a run's status; a running one spins with the band's tick. */
+export const statusMark = (status: RunStatus, tick: number): { glyph: string; color?: string } => {
+  if (status === 'running') return { glyph: SPINNER[tick % SPINNER.length]!, color: 'claude' }
+  if (status === 'waiting') return { glyph: '◷', color: 'suggestion' }
+  if (status === 'completed') return { glyph: '✓', color: 'success' }
+  if (status === 'failed') return { glyph: '✗', color: 'error' }
+  return { glyph: '■', color: 'warning' }
 }
+
+export const isActive = (status: RunStatus) => status === 'running' || status === 'waiting'
+
+/** The engine's agent statuses folded into the band's five. */
+export const runStatus = (status: string): RunStatus => {
+  if (status === 'completed' || status === 'failed' || status === 'killed' || status === 'waiting') return status
+  if (status === 'idle') return 'waiting'
+  return 'running'
+}
+
+/** A task notification's status word (`completed`, `failed`, `killed`, `stopped`, ...). */
+export const notifiedStatus = (status: string): RunStatus =>
+  status === 'completed' ? 'completed' : status === 'killed' || status === 'stopped' ? 'killed' : status === 'running' ? 'running' : 'failed'
+
+/** The last segment of a plugin-scoped agent type: `pr-review:code-reviewer` → `code-reviewer`. */
+export const shortType = (type: string) => type.split(':').pop() || type
+
+/** One line of a shell command, its whitespace folded. */
+export const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
+
+export type Part = { text: string; color?: string; emphasis?: 'warning' | 'strong' | 'plain' }

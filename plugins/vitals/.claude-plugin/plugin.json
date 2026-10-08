@@ -1,7 +1,7 @@
 {
   "name": "vitals",
-  "version": "0.1.0",
-  "description": "A live vitals band above the prompt, in the terminal and in the desktop app: model and reasoning effort, context meter, 5-hour and weekly plan limits with reset countdowns, session cost, and per-turn and per-session tokens in/out, cache read/write and hit rate. /vitals switches between the full band and one compact line.",
+  "version": "0.2.0",
+  "description": "A framed live dashboard above the prompt, in the terminal and in the desktop app: model and reasoning effort, context and plan-limit meters, cost, tokens in/out with cache read/write and hit rate per turn and per session, every subagent with its model, effort, tokens and tools, background shells, tools running now and tool counts. /vitals switches to one compact line, /vitals pane opens the full history.",
   "author": {
     "name": "naicud",
     "url": "https://github.com/naicud"
@@ -9,7 +9,16 @@
   "homepage": "https://github.com/naicud/cc-vitals",
   "repository": "https://github.com/naicud/cc-vitals",
   "license": "MIT",
-  "keywords": ["mod", "statusline", "tokens", "cache", "effort", "context", "cost", "usage-limits"],
+  "keywords": [
+    "mod",
+    "statusline",
+    "tokens",
+    "cache",
+    "effort",
+    "context",
+    "cost",
+    "usage-limits"
+  ],
   "types": "./types/index.d.ts",
   "userConfig": {
     "cache_ttl": {
