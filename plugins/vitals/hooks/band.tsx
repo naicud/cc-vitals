@@ -1,5 +1,7 @@
 import type { RenderChildren } from 'claude-code'
 
+import type { View } from '../types'
+
 import { ago, count, effortPips, limitShortLabel, money, prettyModel, until } from './format'
 import type { Part } from './format'
 import type { Forecast } from './forecast'
@@ -229,5 +231,42 @@ export const drawAll = (input: BandInput) => {
   )
 }
 
-/** The small dashboard: the vitals box alone, header, meters and forecast. */
-export const drawCompact = (input: BandInput) => vitals(input, input.room).box
+/** The medium dashboard: the vitals box, what fills the context, and the agents. */
+const drawMedium = (input: BandInput, maxBandRows: number) => {
+  const { Box } = input.canvas.els
+  const top = vitals(input, input.room)
+  const budget = Math.min(input.rows, maxBandRows) - top.rows
+  const placed = (contextRoom: number, agentsRoom: number) => ({
+    context: { section: contextSection(input, contextRoom), rank: 1 },
+    agents: { section: agentsSection(input, agentsRoom, Math.max(1, budget - 6)), rank: 0 },
+  })
+  let body: RenderChildren
+  if (input.room < TWO_COLUMNS_FROM) {
+    const { context, agents } = placed(input.room, input.room)
+    body = layout(input, [context, agents], budget)
+  } else {
+    const leftRoom = Math.floor((input.room - COLUMN_GAP) / 2)
+    const rightRoom = input.room - COLUMN_GAP - leftRoom
+    const { context, agents } = placed(leftRoom, rightRoom)
+    body = (
+      <Box flexDirection="row" columnGap={COLUMN_GAP}>
+        <Box width={leftRoom} flexShrink={0}>
+          {layout(input, [context], budget)}
+        </Box>
+        <Box width={rightRoom} flexShrink={0}>
+          {layout(input, [agents], budget)}
+        </Box>
+      </Box>
+    )
+  }
+  return (
+    <Box flexDirection="column">
+      {top.box}
+      {body}
+    </Box>
+  )
+}
+
+/** The band at its detail level: low the vitals box alone, medium with context and agents, high everything. */
+export const drawLevel = (input: BandInput, level: View, maxBandRows: number) =>
+  level === 'low' ? vitals(input, input.room).box : level === 'medium' ? drawMedium(input, maxBandRows) : drawBand(input, maxBandRows)

@@ -1,7 +1,7 @@
 {
   "name": "vitals",
-  "version": "0.6.0",
-  "description": "A light, framed live dashboard above the prompt, in the terminal and in the desktop app: model and effort, context and plan-limit meters, cost and burn rate, tokens and cache per turn and session, auto-compaction, live tools, background shells and every subagent with its model and effort, plus weekly and monthly usage. Two columns on wide terminals, sized to the rows it has, never scrolling. Requires ccusage (npm i -g ccusage) for the usage section. /vitals compact line, /vitals pane full view, /vitals report usage report.",
+  "version": "0.7.0",
+  "description": "A light, framed live dashboard above the prompt, in the terminal and in the desktop app: model and effort, context and plan-limit meters, cost and burn rate, tokens and cache per turn and session, auto-compaction, live tools, background shells and every subagent with its model and effort, plus weekly and monthly usage. Two columns on wide terminals, sized to the rows it has, never scrolling. Requires ccusage (npm i -g ccusage) for the usage section. /vitals-low, /vitals-medium and /vitals-high set the detail level; /vitals pane full view, /vitals report usage report.",
   "author": {
     "name": "naicud",
     "url": "https://github.com/naicud"

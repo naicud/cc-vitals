@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ProcessRunResult, Register, SessionUsage } from 'claude-code'
 
-import type { AgentStat, ContextPart, LiveTool, RunStatus, ShellStat, Snapshot, Tokens } from '../types'
-import { drawAll, drawBand, drawCompact } from './band'
+import type { AgentStat, ContextPart, LiveTool, RunStatus, ShellStat, Snapshot, Tokens, View } from '../types'
+import { drawAll, drawLevel } from './band'
 import type { BandInput } from './band'
 import {
   addShell,
@@ -37,7 +37,7 @@ const lastTurn = atom({ plugin: 'vitals', key: 'lastTurn' } as const, null)
 const totals = atom({ plugin: 'vitals', key: 'totals' } as const, null)
 const compactions = atom({ plugin: 'vitals', key: 'compactions' } as const, null)
 const effort = atom({ plugin: 'vitals', key: 'effort' } as const, null)
-const view = atom({ plugin: 'vitals', key: 'view' } as const, 'full')
+const view = atom({ plugin: 'vitals', key: 'view' } as const, 'high')
 const agents = atom({ plugin: 'vitals', key: 'agents' } as const, [])
 const shells = atom({ plugin: 'vitals', key: 'shells' } as const, [])
 const live = atom({ plugin: 'vitals', key: 'live' } as const, [])
@@ -57,6 +57,12 @@ const MAX_BAND_ROWS = 40
 const PANE_ID = 'vitals'
 const REPORT_ID = 'vitals-report'
 const HISTORY_KEY = 'history'
+const LEVEL_KEY = 'level'
+const LEVEL_NAMES: Record<View, string> = { low: 'low · the vitals box', medium: 'medium · vitals, context, agents', high: 'high · everything' }
+const NEXT_LEVEL: Record<View, View> = { high: 'medium', medium: 'low', low: 'high' }
+
+/** A level read back from state or the store: anything else, an older value included, is high. */
+const asLevel = (value: unknown): View => (value === 'low' || value === 'medium' ? value : 'high')
 
 // Module memory: what the slow reads returned last, and when. A reload starts it over.
 let gitAt = 0
@@ -179,6 +185,13 @@ async function restoreHistory($: EngineInterface) {
   if (days !== null) await update($, history, () => ({ at, days }))
 }
 
+/** Shows `level` now and in the sessions to come. */
+async function setLevel($: EngineInterface, level: View) {
+  await update($, view, () => level)
+  await $.store.set(LEVEL_KEY, level)
+  return { text: `Vitals: ${LEVEL_NAMES[level]}.` }
+}
+
 /** A model request: the main loop's sets the session's effort, a subagent's its own model and effort. */
 async function noteStep($: EngineInterface, agentId: string | undefined, model: string, level: string | null) {
   if (agentId === undefined) {
@@ -288,8 +301,13 @@ export const register: Register = (on, options) => {
     const started = await next(e)
     await $.command.register({
       name: 'vitals',
-      description: 'Vitals: full ↔ compact band · "/vitals pane" every agent and shell · "/vitals report" weekly and monthly usage',
+      description: 'Vitals: next detail level (high → medium → low) · "/vitals pane" every agent and shell · "/vitals report" weekly and monthly usage',
     })
+    await $.command.register({ name: 'vitals-low', description: 'Vitals: the vitals box alone (model, effort, cost, context, compaction, limits, forecast)' })
+    await $.command.register({ name: 'vitals-medium', description: 'Vitals: the vitals box, what fills the context, and the agents' })
+    await $.command.register({ name: 'vitals-high', description: 'Vitals: everything (tokens, context, usage, agents, tools, shells)' })
+    const saved: unknown = await $.store.get(LEVEL_KEY)
+    await update($, view, () => asLevel(saved))
     await restoreHistory($)
     await refresh($)
     void refreshHistory($, false)
@@ -311,10 +329,12 @@ export const register: Register = (on, options) => {
       await $.ui.open({ id: REPORT_ID, title: 'Vitals · usage report' })
       return { text: 'Vitals usage report opened; refreshing from ccusage.' }
     }
-    const next = await update($, view, was => (was === 'full' ? 'compact' : 'full'))
-
-    return { text: next === 'compact' ? 'Vitals: compact line.' : 'Vitals: full band.' }
+    return setLevel($, NEXT_LEVEL[asLevel(await read($, view))])
   })
+
+  on('command.run', { command: 'vitals-low' }, async $ => setLevel($, 'low'))
+  on('command.run', { command: 'vitals-medium' }, async $ => setLevel($, 'medium'))
+  on('command.run', { command: 'vitals-high' }, async $ => setLevel($, 'high'))
 
   on('session.attach', async ($, e, next) => {
     const attached = await next(e)
@@ -434,7 +454,7 @@ export const register: Register = (on, options) => {
     const input = await gather($, canvas, e.props.bodyColumns, e.props.maxRows, e.props.isWorking, cacheTtlMs)
     if (input === null) return next(e)
 
-    return (await read($, view)) === 'compact' ? drawCompact(input) : drawBand(input, MAX_BAND_ROWS)
+    return drawLevel(input, asLevel(await read($, view)), MAX_BAND_ROWS)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {

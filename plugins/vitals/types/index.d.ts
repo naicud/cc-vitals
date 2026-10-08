@@ -79,7 +79,8 @@ export type ToolCount = { tool: string; count: number; errors: number }
 
 export type ToolCounts = { since: number; counts: ToolCount[] }
 
-export type View = 'full' | 'compact'
+/** How much the band shows: the vitals box alone, plus context and agents, or everything. */
+export type View = 'low' | 'medium' | 'high'
 
 /** One model's share of a day, as ccusage prices it. */
 export type ModelDay = { model: string; costUsd: number; tokens: number }

@@ -34,9 +34,16 @@ The band never scrolls (at most 40 rows). Every section gets one line first, the
 
 Commands:
 
-- `/vitals` switches between the full dashboard (the default) and the small one: the ◆ VITALS box alone, with the session, the four bars and the forecast.
-- `/vitals pane` opens a pane with every section in full: every agent, every shell, every tool.
-- `/vitals report` opens the usage report: the last 14 days, the last 6 weeks, this month and the last, and this month's models, each with bars.
+| Command | Shows |
+| :-- | :-- |
+| `/vitals-high` | Everything: the vitals box, tokens, context, usage, agents, tools, shells. The default |
+| `/vitals-medium` | The vitals box, 🧩 context and 🤖 agents |
+| `/vitals-low` | The vitals box alone: model, effort, session, cost, the four bars and the forecast |
+| `/vitals` | The next level down: high → medium → low → high |
+| `/vitals pane` | A pane with every section in full: every agent, every shell, every tool |
+| `/vitals report` | The usage report: the last 14 days, the last 6 weeks, this month and the last, and this month's models, each with bars |
+
+The level you pick stays for the sessions that follow.
 
 ## What it shows
 

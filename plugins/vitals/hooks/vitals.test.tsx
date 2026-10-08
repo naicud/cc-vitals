@@ -66,7 +66,7 @@ const CCUSAGE = JSON.stringify({
 // What the engine answers beneath the mod: a session on main with two changed files, 680k of a
 // 1M window auto-compacting at 900k, both plan limits, $4.21 spent, effort high in /config, one
 // running subagent and ccusage's daily report.
-const fakeEngine = (on: On, toasts: string[] = []) => {
+const fakeEngine = (on: On, toasts: string[] = [], stored: unknown[] = []) => {
   on('ui.toast', ($, e) => {
     toasts.push(e.text)
     return { value: undefined }
@@ -74,7 +74,10 @@ const fakeEngine = (on: On, toasts: string[] = []) => {
   on('ui.open', () => ({ value: { isPlaced: true as const } }))
   on('ui.invalidate', () => ({ value: undefined }))
   on('store.get', () => ({ value: undefined }))
-  on('store.set', () => ({ value: undefined }))
+  on('store.set', ($, e) => {
+    stored.push(e.value)
+    return { value: undefined }
+  })
   on('session.usage', ($, e) => ({
     value: {
       startedAt: STARTED,
@@ -316,14 +319,24 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await bandText($, surface)).toContain('completed')
   })
 
-  test(`${surface}: /vitals switches to the vitals box alone`, async ($, on) => {
+  test(`${surface}: /vitals-low shows the vitals box alone`, async ($, on) => {
     fakeEngine(on)
     await runSession($)
-    await $.command.run({ command: 'vitals', args: '', ...COMMAND })
+    await $.command.run({ command: 'vitals-low', args: '', ...COMMAND })
 
-    const band = await bandText($, surface)
+    const band = await bandText($, surface, { ...PROPS, bodyColumns: 200 })
     for (const text of ['◆ VITALS', '⛽ CTX', '🗜 COMPACT', '⏳ 5H LIMIT', '📅 WEEKLY', '🔮 FORECAST', '💸 $4.21']) expect(band).toContain(text)
-    for (const text of ['🔥 TOKENS', '🤖 AGENTS', '📊 USAGE']) expect(band).not.toContain(text)
+    for (const text of ['🔥 TOKENS', '🤖 AGENTS', '🧩 CONTEXT', '📊 USAGE']) expect(band).not.toContain(text)
+  })
+
+  test(`${surface}: /vitals-medium adds the context and the agents, nothing else`, async ($, on) => {
+    fakeEngine(on)
+    await runSession($)
+    await $.command.run({ command: 'vitals-medium', args: '', ...COMMAND })
+
+    const band = await bandText($, surface, { ...PROPS, bodyColumns: 200 })
+    for (const text of ['◆ VITALS', '🧩 CONTEXT', 'Messages 660k', '🤖 AGENTS', 'Review the diff', 'Sonnet 5.5']) expect(band).toContain(text)
+    for (const text of ['🔥 TOKENS', '🔧 TOOLS', '📊 USAGE', '🐚 SHELLS']) expect(band).not.toContain(text)
   })
 
   test(`${surface}: /vitals report draws days, weeks, months and models`, async ($, on) => {
@@ -335,6 +348,21 @@ for (const surface of ['terminal', 'desktop'] as const) {
     for (const text of ['📊 USAGE REPORT', 'Thu 10-08 ◀', '$50.00', 'this week', 'Oct 2026 (so far)', 'Sonnet 5.5']) expect(pane).toContain(text)
   })
 }
+
+test('/vitals steps high → medium → low → high and the store keeps the choice', async ($, on) => {
+  const stored: unknown[] = []
+  fakeEngine(on, [], stored)
+  await runSession($)
+  const answers: unknown[] = []
+  for (let i = 0; i < 3; i++) answers.push(await $.command.run({ command: 'vitals', args: '', ...COMMAND }))
+
+  expect(answers).toEqual([
+    { text: 'Vitals: medium · vitals, context, agents.' },
+    { text: 'Vitals: low · the vitals box.' },
+    { text: 'Vitals: high · everything.' },
+  ])
+  expect(stored.filter(v => typeof v === 'string')).toEqual(['medium', 'low', 'high'])
+})
 
 test('an interrupted turn keeps the last counted tokens on show', async ($, on) => {
   fakeEngine(on)
