@@ -7,7 +7,7 @@ import type { Part } from './format'
 import type { Forecast } from './forecast'
 import { agentsSection, contextSection, effortCell, shellsSection, tokensSection, toolsSection, usageSection } from './sections'
 import type { BandInput, Section } from './sections'
-import { ACCENT, CARD_CELLS, meter, meterChrome, parts } from './ui'
+import { ACCENT, CARD_CELLS, cellWidth, meter, meterChrome, parts } from './ui'
 
 export type { BandInput } from './sections'
 
@@ -95,26 +95,49 @@ const vitals = (input: BandInput, room: number) => {
   const ageMs = input.now - snap.startedAt
   const burn = snap.costUsd !== null && ageMs >= 5 * 60_000 ? `  🔥 ${money(snap.costUsd / (ageMs / 3_600_000))}/h` : ''
   const level = effortCell(input.effort)
-  const { rows, bar } = meterRows(meterItems(input), room - CARD_CELLS)
+  const inner = room - CARD_CELLS
+  const { rows, bar } = meterRows(meterItems(input), inner)
   const ahead = forecastParts(input.forecasts, input.now)
+  const pips = input.effort === null ? '' : ` ${effortPips(input.effort)}`
+  const title = `◆ VITALS   🧠 ${prettyModel(snap.model)}   ⚡ ${level.text.toUpperCase()}${pips}`
+  const session = `${where}   ⏳ ${ago(ageMs)} · ${snap.prompts} prompt${snap.prompts === 1 ? '' : 's'}   `
+  const cost = snap.costUsd === null ? '' : `💸 ${money(snap.costUsd)}`
+  // Where the title and the session do not fit side by side, the session takes a row of its own.
+  const isStacked = cellWidth(title) + 2 + cellWidth(session + cost + burn) > inner
+  // The forecast wraps under its label; count the rows it takes.
+  const aheadWidth = ahead.reduce((sum, a, i) => sum + cellWidth(a.text) + (i > 0 ? 3 : 0), 0)
+  const aheadRows = ahead.length === 0 ? 0 : Math.max(1, Math.ceil(aheadWidth / Math.max(1, inner - 13)))
+  const sessionRow = (
+    <Box flexDirection="row" marginLeft={isStacked ? 0 : 2} flexShrink={1}>
+      <Box flexShrink={1}>
+        <Text dimColor wrap="truncate-end">{session}</Text>
+      </Box>
+      {cost !== '' && (
+        <Box flexShrink={0}>
+          <Text bold>{cost}</Text>
+        </Box>
+      )}
+      {burn !== '' && (
+        <Box flexShrink={0}>
+          <Text dimColor>{burn}</Text>
+        </Box>
+      )}
+    </Box>
+  )
   return {
-    rows: 2 + 1 + rows.length + (ahead.length > 0 ? 1 : 0),
+    rows: 2 + (isStacked ? 2 : 1) + rows.length + aheadRows,
     box: (
       <Box flexDirection="column" width={room} borderStyle="round" borderColor={ACCENT} paddingX={1}>
-        <Box flexDirection="row" justifyContent="space-between">
+        <Box flexDirection={isStacked ? 'column' : 'row'} justifyContent="space-between">
           <Box flexDirection="row" flexShrink={0}>
             <Text bold color={ACCENT}>{'◆ VITALS'}</Text>
             <Text>{'   🧠 '}</Text>
             <Text bold>{prettyModel(snap.model)}</Text>
             <Text>{'   ⚡ '}</Text>
             <Text bold color={level.color} dimColor={level.dim}>{level.text.toUpperCase()}</Text>
-            {input.effort !== null && <Text color={level.color}>{` ${effortPips(input.effort)}`}</Text>}
+            {pips !== '' && <Text color={level.color}>{pips}</Text>}
           </Box>
-          <Box flexDirection="row" marginLeft={2} flexShrink={1}>
-            <Text dimColor wrap="truncate-end">{`${where}   ⏳ ${ago(ageMs)} · ${snap.prompts} prompt${snap.prompts === 1 ? '' : 's'}   `}</Text>
-            {snap.costUsd !== null && <Text bold>{`💸 ${money(snap.costUsd)}`}</Text>}
-            {burn !== '' && <Text dimColor>{burn}</Text>}
-          </Box>
+          {sessionRow}
         </Box>
         {rows.map(row => (
           <Box flexDirection="row">

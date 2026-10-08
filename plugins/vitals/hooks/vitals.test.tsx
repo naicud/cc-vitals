@@ -366,6 +366,18 @@ test('/vitals steps high → medium → low → high and the store keeps the cho
   expect(stored.filter(v => typeof v === 'string')).toEqual(['medium', 'low', 'high'])
 })
 
+test('a narrow vitals box puts the session on a row of its own, the cost whole', async ($, on) => {
+  fakeEngine(on)
+  await runSession($)
+
+  const ui = await $.ui.mount({ plugin: 'vitals', surface: 'terminal', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 76 } })
+  // The innermost element holding the cost is the cost alone, never split with the session text.
+  const cost = (await ui.findAll({ text: '💸 $4.21' })).at(-1)
+  expect(cost?.text).toBe('💸 $4.21')
+  const header = (await ui.findAll({ text: /◆ VITALS.*📁 cc-vitals/ })).at(-1)
+  expect(header?.text).toContain('📁 cc-vitals')
+})
+
 test('an interrupted turn keeps the last counted tokens on show', async ($, on) => {
   fakeEngine(on)
   await runSession($)

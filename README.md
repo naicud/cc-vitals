@@ -41,6 +41,10 @@ The level you pick stays for the sessions that follow.
 
 <img src="docs/screenshots/vitals-report.png" alt="vitals report: cost, tokens and top model per day for 14 days with bars; cost per week for 6 weeks with the change against the week before; this month and last; this month's models with their share" width="600">
 
+**`/vitals pane`**: every section in full, in a pane beside the conversation: every agent, every shell, every tool.
+
+<img src="docs/screenshots/vitals-pane.png" alt="vitals pane: the vitals box, tokens, context, agents, tools and usage stacked in full, in a narrow side pane" width="600">
+
 ## What it shows
 
 | Section | Contents |
