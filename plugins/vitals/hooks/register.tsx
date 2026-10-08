@@ -242,8 +242,8 @@ async function noteEnded($: EngineInterface, id: string, status: RunStatus) {
 
 /** Redraws once a second while something runs, so spinners and elapsed times move; idle, nothing. */
 async function tick($: EngineInterface) {
-  const [running, agentList, shellList] = await Promise.all([read($, live), read($, agents), read($, shells)])
-  if (isBusy(running, agentList, shellList)) $.ui.invalidate('ui.render')
+  const [running, agentList, shellList, now] = await Promise.all([read($, live), read($, agents), read($, shells), $.clock.now()])
+  if (isBusy(running, agentList, shellList, now)) $.ui.invalidate('ui.render')
 }
 
 /** Everything a drawing reads, at one moment. */

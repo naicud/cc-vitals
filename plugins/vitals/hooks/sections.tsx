@@ -10,6 +10,7 @@ import {
   elapsed,
   hitRate,
   isActive,
+  isShown,
   money,
   oneLine,
   prettyModel,
@@ -198,11 +199,23 @@ const agentRow = (input: BandInput, a: AgentStat): Record<string, Cell> => {
 }
 
 /** The main loop and every subagent: what each runs on and what it spent. */
-export const agentsSection = (input: BandInput, room: number, limit: number): Section => {
+/** Which runs a table shows: the band only those still running, the pane every one this session. */
+export type RunScope = 'running' | 'all'
+
+/** The note over a runs table: how many run, and where the ended ones are when the band hides them. */
+const scopeNote = (scope: RunScope, running: number, all: number, shown: number, none: string) => {
+  const ended = all - running
+  if (scope === 'all') return all === 0 ? none : runNote(running, all, all - shown)
+  if (running === 0) return ended > 0 ? `none running · ${ended} done in /vitals pane` : none
+  return `${running} running${ended > 0 ? ` · ${ended} done in /vitals pane` : ''}`
+}
+
+export const agentsSection = (input: BandInput, room: number, limit: number, scope: RunScope): Section => {
   const sorted = newestFirst(input.agents)
   const running = sorted.filter(a => isActive(a.status))
-  const shown = sorted.slice(0, Math.max(running.length, Math.min(sorted.length, limit)))
-  const note = sorted.length === 0 ? 'no subagents yet' : runNote(running.length, sorted.length, sorted.length - shown.length)
+  const pool = scope === 'all' ? sorted : sorted.filter(r => isShown(r, input.now))
+  const shown = pool.slice(0, Math.max(running.length, Math.min(pool.length, limit)))
+  const note = scopeNote(scope, running.length, sorted.length, shown.length, 'no subagents yet')
   return {
     fullRows: CARD_ROWS + TABLE_HEAD + 1 + shown.length,
     full: () =>
@@ -215,15 +228,15 @@ export const agentsSection = (input: BandInput, room: number, limit: number): Se
       ),
     mini: () =>
       lineOf(input, '🤖 AGENTS', [
-        ...(sorted.length === 0 ? [{ text: 'no subagents yet' }] : []),
-        ...sorted.slice(0, 4).map(a => {
+        ...(pool.length === 0 ? [{ text: note }] : []),
+        ...pool.slice(0, 4).map(a => {
           const mark = statusMark(a.status, frame(input))
           return {
             text: `${mark.glyph} ${shortType(a.type)} ${a.model === null ? '' : prettyModel(a.model)}${a.effort ? ` ${a.effort}` : ''} ${count(totalTokens(a.tokens))}`,
             color: isActive(a.status) ? 'text' : undefined,
           }
         }),
-        ...(sorted.length > 4 ? [{ text: `+${sorted.length - 4}` }] : []),
+        ...(pool.length > 4 ? [{ text: `+${pool.length - 4}` }] : []),
       ]),
   }
 }
@@ -286,15 +299,16 @@ const SHELL_COLUMNS: Column[] = [
   { title: 'TIME', width: 6, align: 'right' },
 ]
 
-export const shellsSection = (input: BandInput, room: number, limit: number): Section | null => {
-  if (input.shells.length === 0) return null
+export const shellsSection = (input: BandInput, room: number, limit: number, scope: RunScope): Section | null => {
   const sorted = newestFirst(input.shells)
   const running = sorted.filter(s => isActive(s.status))
+  const pool = scope === 'all' ? sorted : sorted.filter(r => isShown(r, input.now))
+  if (pool.length === 0) return null
   const by = (agentId: string | null) => {
     const agent = agentId === null ? undefined : input.agents.find(a => a.id === agentId)
     return agent ? shortType(agent.type) : 'main'
   }
-  const shown = sorted.slice(0, Math.max(running.length, Math.min(sorted.length, limit)))
+  const shown = pool.slice(0, Math.max(running.length, Math.min(pool.length, limit)))
   const cells = shown.map((s): Record<string, Cell> => {
     const mark = statusMark(s.status, frame(input))
     return {
@@ -306,20 +320,20 @@ export const shellsSection = (input: BandInput, room: number, limit: number): Se
       TIME: { text: elapsed((s.endedAt ?? input.now) - s.startedAt), dim: !isActive(s.status) },
     }
   })
-  const note = runNote(running.length, sorted.length, sorted.length - shown.length)
+  const note = scopeNote(scope, running.length, sorted.length, shown.length, 'none')
   return {
     fullRows: CARD_ROWS + TABLE_HEAD + shown.length,
     full: () => card(input.canvas.els, '🐚 SHELLS', note, room, table(input.canvas.els, SHELL_COLUMNS, cells, room - CARD_CELLS)),
     mini: () =>
       lineOf(input, '🐚 SHELLS', [
-        ...sorted.slice(0, 3).map(s => {
+        ...pool.slice(0, 3).map(s => {
           const mark = statusMark(s.status, frame(input))
           return {
             text: `${mark.glyph} ${oneLine(s.description ?? s.command)} ${s.status} ${elapsed((s.endedAt ?? input.now) - s.startedAt)}`,
             color: isActive(s.status) ? ACCENT : undefined,
           }
         }),
-        ...(sorted.length > 3 ? [{ text: `+${sorted.length - 3}` }] : []),
+        ...(pool.length > 3 ? [{ text: `+${pool.length - 3}` }] : []),
       ]),
   }
 }

@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { mergeRoster, parseNotification } from './collect'
-import { count, hitRate, prettyModel } from './format'
+import { count, hitRate, isShown, prettyModel } from './format'
 import { forecast } from './forecast'
 import { historySince, parseDaily, periods, weekStart } from './report'
 import { blocks, cellWidth, fitColumns } from './ui'
@@ -66,7 +66,7 @@ const CCUSAGE = JSON.stringify({
 // What the engine answers beneath the mod: a session on main with two changed files, 680k of a
 // 1M window auto-compacting at 900k, both plan limits, $4.21 spent, effort high in /config, one
 // running subagent and ccusage's daily report.
-const fakeEngine = (on: On, toasts: string[] = [], stored: unknown[] = []) => {
+const fakeEngine = (on: On, toasts: string[] = [], stored: unknown[] = [], clock = { now: NOW }) => {
   on('ui.toast', ($, e) => {
     toasts.push(e.text)
     return { value: undefined }
@@ -113,7 +113,7 @@ const fakeEngine = (on: On, toasts: string[] = [], stored: unknown[] = []) => {
   on('session.turns', () => ({ value: 12 }))
   on('session.model', () => ({ value: 'claude-opus-5-5[1m]' }))
   on('agent.list', () => ({ value: ROSTER }))
-  on('clock.now', () => ({ value: NOW }))
+  on('clock.now', () => ({ value: clock.now }))
   on('clock.every', () => ({ value: undefined }))
   on('clock.after', () => ({ value: undefined }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
@@ -195,6 +195,37 @@ test('a limit forecast uses the window average, then the last hour once there is
   expect(fast?.pace).toBe('recent')
   expect(Math.round(((fast?.outAt ?? 0) - NOW) / 60_000)).toBe(58)
   expect(forecast({ kind: 'spend_limit', percent: 10, resetsAt }, [], NOW)).toBe(null)
+})
+
+test('an ended run stays three seconds, then leaves the band', () => {
+  expect(isShown({ status: 'running', endedAt: null }, NOW)).toBe(true)
+  expect(isShown({ status: 'completed', endedAt: NOW - 2000 }, NOW)).toBe(true)
+  expect(isShown({ status: 'completed', endedAt: NOW - 3000 }, NOW)).toBe(false)
+})
+
+test('a finished shell leaves the band after three seconds and stays in the pane', async ($, on) => {
+  const clock = { now: NOW }
+  fakeEngine(on, [], [], clock)
+  await runSession($)
+  await $.prompt.submit({
+    text: '<task-notification><task-id>b8f2</task-id><status>completed</status></task-notification>',
+    wait: false,
+    origin: { kind: 'task-notification' },
+  })
+  expect(await bandText($, 'terminal', { ...PROPS, bodyColumns: 200 })).toContain('Start the dev server')
+
+  clock.now = NOW + 4000
+  expect(await bandText($, 'terminal', { ...PROPS, bodyColumns: 200 })).not.toContain('🐚 SHELLS')
+  const ui = await $.ui.mount({
+    plugin: 'vitals',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'vitals',
+    props: { title: 'p', isFocused: false, bodyColumns: 120, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 80 }, view: {} },
+  })
+  const pane = (await ui.find({ text: /./ }))?.text ?? ''
+  expect(pane).toContain('Start the dev server')
+  expect(pane).toContain('completed')
 })
 
 test('a task notification names each task and how it ended', () => {

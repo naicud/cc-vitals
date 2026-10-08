@@ -93,6 +93,13 @@ export const statusMark = (status: RunStatus, tick: number): { glyph: string; co
 
 export const isActive = (status: RunStatus) => status === 'running' || status === 'waiting'
 
+/** How long a run that has ended stays in the band, its ✓ or ✗ on show, before it leaves. */
+export const LINGER_MS = 3000
+
+/** Whether the band still shows a run: while it runs, and for LINGER_MS after it ends. */
+export const isShown = (run: { status: RunStatus; endedAt: number | null }, now: number) =>
+  isActive(run.status) || (run.endedAt !== null && now - run.endedAt < LINGER_MS)
+
 /** The engine's agent statuses folded into the band's five. */
 export const runStatus = (status: string): RunStatus => {
   if (status === 'completed' || status === 'failed' || status === 'killed' || status === 'waiting') return status

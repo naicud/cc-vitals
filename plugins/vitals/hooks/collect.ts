@@ -1,7 +1,7 @@
 import type { AgentInfo, ConfigRow, SessionContextBreakdown, SessionUsage } from 'claude-code'
 
 import type { AgentStat, ContextPart, Limit, LiveTool, RunStatus, ShellStat, ToolCounts, Tokens } from '../types'
-import { NO_TOKENS, addTokens, isActive, limitLabel, notifiedStatus, runStatus, until } from './format'
+import { NO_TOKENS, addTokens, isActive, isShown, limitLabel, notifiedStatus, runStatus, until } from './format'
 
 // Pure folds over the session's values: register.tsx reads the engine and writes the results.
 
@@ -150,5 +150,6 @@ export const parseNotification = (text: string) => {
   return ids.map((id, i) => ({ id, status: notifiedStatus(statuses[i] ?? 'completed') }))
 }
 
-export const isBusy = (live: LiveTool[], agents: AgentStat[], shells: ShellStat[]) =>
-  live.length > 0 || agents.some(a => isActive(a.status)) || shells.some(s => isActive(s.status))
+/** Whether the band has something moving: a tool in flight, a run going, or one leaving after it ended. */
+export const isBusy = (live: LiveTool[], agents: AgentStat[], shells: ShellStat[], now: number) =>
+  live.length > 0 || agents.some(a => isShown(a, now)) || shells.some(s => isShown(s, now))

@@ -198,9 +198,9 @@ const numbers = (input: BandInput, room: number): Placed[] => [
 
 /** The work: agents on top, then the tools and the shells; tables ask for what they could show. */
 const work = (input: BandInput, room: number, rows: number): Placed[] => [
-  { section: agentsSection(input, room, Math.max(1, rows - 12)), rank: RANK.agents },
+  { section: agentsSection(input, room, Math.max(1, rows - 12), 'running'), rank: RANK.agents },
   { section: toolsSection(input, room, Math.max(1, Math.min(8, rows - 12))), rank: RANK.tools },
-  { section: shellsSection(input, room, Math.max(1, rows - 16)), rank: RANK.shells },
+  { section: shellsSection(input, room, Math.max(1, rows - 16), 'running'), rank: RANK.shells },
 ]
 
 /** The dashboard: the vitals box on top, then the section boxes, sized to the rows the band has. */
@@ -241,9 +241,9 @@ export const drawAll = (input: BandInput) => {
   const sections = [
     tokensSection(input, input.room),
     contextSection(input, input.room),
-    agentsSection(input, input.room, 40),
+    agentsSection(input, input.room, 40, 'all'),
     toolsSection(input, input.room, 40),
-    shellsSection(input, input.room, 40),
+    shellsSection(input, input.room, 40, 'all'),
     usageSection(input, input.room),
   ]
   return (
@@ -261,7 +261,7 @@ const drawMedium = (input: BandInput, maxBandRows: number) => {
   const budget = Math.min(input.rows, maxBandRows) - top.rows
   const placed = (contextRoom: number, agentsRoom: number) => ({
     context: { section: contextSection(input, contextRoom), rank: 1 },
-    agents: { section: agentsSection(input, agentsRoom, Math.max(1, budget - 6)), rank: 0 },
+    agents: { section: agentsSection(input, agentsRoom, Math.max(1, budget - 6), 'running'), rank: 0 },
   })
   let body: RenderChildren
   if (input.room < TWO_COLUMNS_FROM) {
