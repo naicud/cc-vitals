@@ -4,29 +4,7 @@
 
 Model and reasoning effort, context and plan limits, cost and burn rate, tokens and cache per turn and session, auto-compaction, every subagent with its own model and effort, background shells, the tool running right now, and your weekly and monthly spend.
 
-```
-╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ◆ VITALS   🧠 Opus 5.5 1M   ⚡ HIGH ▰▰▰▱▱                     📁 cc-vitals  🌿 main ↓7   ⏳ 1h 20m · 7 prompts   💸 $16.18  🔥 $12.11/h │
-│ ⛽ CTX ████████▊░░░░░░░░ 44% 435k/1M │ 🗜 COMPACT █████████▏░░░░░░░ 45% 532k to go │ ⏳ 5H LIMIT ███████▏░░░░░░░░ 45% ↻ 2h 19m │ 📅 WEEKLY ██▏░░░░ 13% ↻ 6d 4h │
-│ 🔮 FORECAST  5H LIMIT out at 14:05, reset 15:30 ⚠ (last hour) · WEEKLY ≈ 61% at reset ✓ (window avg)                                  │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─────────────────────────────────────────────────────────────────╮  ╭─────────────────────────────────────────────────────────────────╮
-│ 🔥 TOKENS                     🧊 cache warm · expires in 54m     │  │ 🤖 AGENTS                               1 running · 2 done      │
-│         │   IN │  OUT │ CACHE R │ CACHE W │  HIT │  TOTAL │ NOTE │  │   │ AGENT           │ MODEL       │ EFFORT │ TOKENS │  HIT │ TIME  │
-│ ────────┼──────┼──────┼─────────┼─────────┼──────┼────────┼───── │  │ ──┼─────────────────┼─────────────┼────────┼────────┼──────┼────── │
-│ turn    │   22 │  19k │    4.7M │     24k │  99% │   4.7M │ 3m56 │  │ ◆ │ main            │ Opus 5.5 1M │ high   │  18.5M │  99% │ 1h 20 │
-│ session │   98 │  99k │   18.2M │    143k │  99% │  18.5M │ 2 tu │  │ ⠋ │ Review the diff │ Sonnet 5.5  │ medium │    47k │  87% │ 1m20s │
-╰─────────────────────────────────────────────────────────────────╯  │ ✓ │ Explore auth    │ Haiku 5.5   │ low    │    12k │  88% │   40s │
-╭─────────────────────────────────────────────────────────────────╮  ╰─────────────────────────────────────────────────────────────────╯
-│ 📊 USAGE                                      ccusage · 9m ago   │  ╭─────────────────────────────────────────────────────────────────╮
-│ PERIOD │  COST │  TOKENS │ VS BEFORE │ TOP MODELS                │  │ 🔧 TOOLS                       42 calls · 1 error · 1 running   │
-│ ───────┼───────┼─────────┼───────────┼────────────────────────── │  │   │ TOOL        │ CALLS │ ERR │ USE        │ NOW                 │
-│ today  │  $138 │  412.1M │    ▲ +1%  │ Opus 5.5 85% · Sonnet 5.5 │  │ ──┼─────────────┼───────┼─────┼────────────┼──────────────────── │
-│ week   │  $497 │    1.4B │   ▼ -41%  │ Opus 5.5 82% · Sonnet 5.5 │  │ ⠋ │ Bash        │    35 │   1 │ ██████████ │ 4s ‹code-reviewer›  │
-│ month  │  $755 │    2.1B │ ▲ +2130%  │ Opus 5.5 79% · Sonnet 5.5 │  │ · │ Write       │     7 │   0 │ ██         │                     │
-│ 14 days  ▁▁▂▅█▃▁▁▂▁▁▁▃▂  peak $378 · /vitals report             │  │ · │ Edit        │     4 │   0 │ █▏         │                     │
-╰─────────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────────────────────────────────╯
-```
+![vitals-high: the vitals box on top; tokens, context and usage on the left; agents and tools on the right](docs/screenshots/vitals-high.png)
 
 Every part has its own box. ◆ VITALS sits on top across the whole width: the header, four bars, ⛽ CTX (context window), 🗜 COMPACT (how far the context is on its way to auto-compaction), ⏳ 5H LIMIT and 📅 WEEKLY (plan limits), and the 🔮 FORECAST of both limits at your current pace. Under it, on a terminal 150 columns wide or more, two columns: 🔥 TOKENS, 🧩 CONTEXT and 📊 USAGE on the left, 🤖 AGENTS, 🔧 TOOLS and 🐚 SHELLS on the right, agents on top. Narrower, one column: tokens, agents, tools, shells, context, usage.
 
@@ -54,6 +32,10 @@ The level you pick stays for the sessions that follow.
 **`/vitals-medium`**: the vitals box, what fills the context, and the agents side by side.
 
 ![vitals-medium: the vitals box; the context bar in /context's colours with its legend (system prompt, tools, MCP, memory, skills, messages, autocompact buffer, free space); the agents table with the main loop and a Haiku subagent, their model, effort, tokens, hit rate and time](docs/screenshots/vitals-medium.png)
+
+**`/vitals-high`**: everything. With the rows this terminal had, 📊 usage got one line; a taller one gets its full table.
+
+![vitals-high: the vitals box; tokens per turn and session with cache read and write and hit rate; the context bar; usage today, this week and this month with a sparkline; the agents table; the tools table with calls, errors and a usage bar](docs/screenshots/vitals-high.png)
 
 ## What it shows
 
