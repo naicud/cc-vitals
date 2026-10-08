@@ -120,7 +120,13 @@ export type Period = { name: string; now: Span; before: Span | null; from: strin
  * Today against yesterday, this week against last week's same days, this month against last
  * month's same days: the comparison is like for like however far into the period we are.
  */
+/** The first day the history holds: Claude Code keeps transcripts for `cleanupPeriodDays` (30 by default). */
+export const firstDate = (days: DayUsage[]) => days.reduce<string | null>((first, d) => (first === null || d.date < first ? d.date : first), null)
+
 export const periods = (days: DayUsage[], today: string): Period[] => {
+  // A period that starts before the history does is not known, so it is not compared against.
+  const first = firstDate(days)
+  const known = (from: string, to: string) => (first === null || from < first ? null : span(days, from, to))
   const week = weekStart(today)
   const intoWeek = Math.round((Date.parse(today) - Date.parse(week)) / 86_400_000)
   const month = monthStart(today)
@@ -128,9 +134,9 @@ export const periods = (days: DayUsage[], today: string): Period[] => {
   const intoMonth = Number(today.slice(8, 10)) - 1
   const lastMonthSame = addDays(lastMonth, intoMonth) < month ? addDays(lastMonth, intoMonth) : addDays(month, -1)
   return [
-    { name: 'today', now: span(days, today, today), before: span(days, addDays(today, -1), addDays(today, -1)), from: today, to: today },
-    { name: 'week', now: span(days, week, today), before: span(days, addDays(week, -7), addDays(week, intoWeek - 7)), from: week, to: today },
-    { name: 'month', now: span(days, month, today), before: span(days, lastMonth, lastMonthSame), from: month, to: today },
+    { name: 'today', now: span(days, today, today), before: known(addDays(today, -1), addDays(today, -1)), from: today, to: today },
+    { name: 'week', now: span(days, week, today), before: known(addDays(week, -7), addDays(week, intoWeek - 7)), from: week, to: today },
+    { name: 'month', now: span(days, month, today), before: known(lastMonth, lastMonthSame), from: month, to: today },
   ]
 }
 

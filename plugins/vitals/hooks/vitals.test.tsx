@@ -236,7 +236,7 @@ test('ccusage days fold into today, week and month against the same days before'
   expect(week?.now.costUsd).toBe(100)
   expect(week?.before?.costUsd).toBe(40) // Mon 28 Sep to Thu 1 Oct, not Fri 2 Oct's 99
   expect(month?.now.costUsd).toBe(219)
-  expect(month?.before?.costUsd).toBe(0) // 1 to 8 September: the September days on record are later
+  expect(month?.before).toBe(null) // 1 to 8 September comes before the history's first day: unknown, not zero
 })
 
 for (const surface of ['terminal', 'desktop'] as const) {
@@ -348,6 +348,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'vitals', surface, component: 'Pane', requestId: 'vitals-report', props: { title: 'r', isFocused: false, bodyColumns: 120, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 60 }, view: {} } })
     const pane = (await ui.find({ text: /./ }))?.text ?? ''
     for (const text of ['📊 USAGE REPORT', 'Thu 10-08 ◀', '$50.00', 'this week', '▲ +150%', 'Oct 2026 (so far)', 'Sonnet 5.5']) expect(pane).toContain(text)
+    // The history starts on 28 September: earlier days and weeks are unknown, not zero.
+    for (const text of ['data from 09-28', 'Fri 09-25', 'no data', 'Sep 2026 (from 09-28)']) expect(pane).toContain(text)
   })
 }
 

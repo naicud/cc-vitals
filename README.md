@@ -131,6 +131,7 @@ To update by hand (without auto-update): `claude plugin marketplace update naicu
 | Symptom | Cause and fix |
 | :-- | :-- |
 | `📊 USAGE no history: ccusage not found` | ccusage is not on the `PATH` Claude Code was started with: install it, restart Claude Code |
+| Usage report shows `no data` for older days | Claude Code deletes transcripts after `cleanupPeriodDays` (30 by default), so ccusage, and the report, only reach that far back. Raise it in `~/.claude/settings.json` (`"cleanupPeriodDays": 365`) to keep a longer history, at the cost of disk space. Periods that start before the first day on record are not compared against |
 | Usage costs look too low | ccusage could not reach its price list and priced new models at zero: run `ccusage claude daily` once online |
 | One line per section instead of tables | The band has few rows (a short terminal, or Claude's progress is taking them): make the terminal taller, or `/vitals pane` for everything in full |
 | No band at all | Claude Code older than v2.1.287, the plugin disabled (`claude plugin list`), or `/vitals` switched it to the compact line: run `/vitals` again |

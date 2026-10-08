@@ -157,6 +157,7 @@ async function refreshHistory($: EngineInterface, isForced: boolean) {
   if (!isForced && held !== null && now - held.at < HISTORY_EVERY_MS) return
 
   isReadingHistory = true
+  $.ui.invalidate('ui.render')
   try {
     const ran = await $.process.run(['ccusage', 'claude', 'daily', '--json', '--since', historySince(localDate(now))], { timeoutMs: 60_000 })
     const days = ran.exitCode === 0 ? parseDaily(ran.stdout) : null
@@ -469,6 +470,6 @@ export const register: Register = (on, options) => {
     const canvas = { els: $.ui.resolve(e), surface: e.surface }
     const [now, past, problem] = await Promise.all([$.clock.now(), read($, history), read($, historyProblem)])
 
-    return drawReport(canvas, e.props.bodyColumns, now, past, problem)
+    return drawReport(canvas, e.props.bodyColumns, now, past, problem, isReadingHistory)
   })
 }
