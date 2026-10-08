@@ -108,11 +108,23 @@ Without ccusage the band still works and the usage section says `ccusage not fou
    claude plugin install vitals@naicud
    ```
 
-3. The band appears above the prompt once the session has its first measurement. The desktop app reads the same `~/.claude` plugins, so it shows up in its Code tab too (start a new session there).
+3. Turn on auto-update, so every new release reaches all your sessions: run `/plugin`, open **Marketplaces**, pick `naicud`, choose **Enable auto-update**. Or set it in `~/.claude/settings.json`:
+
+   ```json
+   {
+     "extraKnownMarketplaces": {
+       "naicud": { "source": { "source": "github", "repo": "naicud/cc-vitals" }, "autoUpdate": true }
+     }
+   }
+   ```
+
+   Claude Code then checks the marketplace a few minutes into each interactive session, updates the plugin on disk and says `Plugin updated: vitals · Run /reload-plugins to apply`; the next session starts on the new version.
+
+4. The band appears above the prompt once the session has its first measurement. The desktop app reads the same `~/.claude` plugins, so it shows up in its Code tab too (start a new session there).
 
 The band replaces most of what a `statusLine` script shows, so you can drop yours (`statusLine` in `~/.claude/settings.json`) or keep it for other things.
 
-To update: `claude plugin marketplace update naicud && claude plugin update vitals@naicud`, then restart or `/reload-plugins`.
+To update by hand (without auto-update): `claude plugin marketplace update naicud && claude plugin update vitals@naicud`, then restart or `/reload-plugins`.
 
 ### Troubleshooting
 
