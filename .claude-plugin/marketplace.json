@@ -1,0 +1,21 @@
+{
+  "name": "naicud",
+  "description": "naicud's Claude Code mods: vitals, a live band with tokens, cache, effort, context, limits and cost.",
+  "owner": {
+    "name": "naicud",
+    "url": "https://github.com/naicud"
+  },
+  "plugins": [
+    {
+      "name": "vitals",
+      "source": "./plugins/vitals",
+      "description": "A live vitals band above the prompt, in the terminal and in the desktop app: model and reasoning effort, context meter, 5-hour and weekly plan limits, session cost, and per-turn and per-session tokens in/out, cache read/write and hit rate. Requires Claude Code v2.1.287+. Zero network.",
+      "version": "0.1.0",
+      "homepage": "https://github.com/naicud/cc-vitals",
+      "category": "analytics",
+      "author": {
+        "name": "naicud"
+      }
+    }
+  ]
+}
