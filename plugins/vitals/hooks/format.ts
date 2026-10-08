@@ -28,7 +28,16 @@ export const hitRate = (t: Tokens) => {
 }
 
 export const count = (n: number) =>
-  n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${+(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k` : `${n}`
+  n >= 1_000_000_000
+    ? `${+(n / 1_000_000_000).toFixed(1)}B`
+    : n >= 1_000_000
+      ? `${+(n / 1_000_000).toFixed(1)}M`
+      : n >= 1000
+        ? `${+(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`
+        : `${n}`
+
+/** A tool's short name: an MCP tool's own, without its server prefix (`mcp__srv__ctx_execute` → `ctx_execute`). */
+export const toolName = (tool: string) => (tool.startsWith('mcp__') ? (tool.split('__').pop() ?? tool) : tool)
 
 export const tone = (percent: number) => (percent >= 95 ? 'error' : percent >= 80 ? 'warning' : undefined)
 

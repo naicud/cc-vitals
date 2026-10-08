@@ -86,7 +86,16 @@ export const table = (els: Els, columns: Column[], rows: Record<string, Cell>[],
   return (
     <Box flexDirection="column">
       {tableRow(els, kept, c => ({ text: c.title, bold: true, dim: true }))}
-      <Text dimColor>{kept.map(c => '─'.repeat(c.width)).join('─┼─')}</Text>
+      <Box flexDirection="row">
+        {kept.map((c, i) => (
+          <Box flexDirection="row">
+            {i > 0 && <Text dimColor>{'─┼─'}</Text>}
+            <Box width={c.width} flexShrink={0}>
+              <Text dimColor wrap="truncate-end">{'─'.repeat(c.width)}</Text>
+            </Box>
+          </Box>
+        ))}
+      </Box>
       {rows.map(row => tableRow(els, kept, c => row[c.title] ?? { text: '' }))}
     </Box>
   )

@@ -14,6 +14,7 @@ import {
   limitShortLabel,
   money,
   oneLine,
+  toolName,
   prettyModel,
   shortType,
   statusMark,
@@ -288,12 +289,11 @@ const runNote = (running: number, all: number, hidden: number) =>
   `${running} running · ${all - running} done${hidden > 0 ? ` · +${hidden} in /vitals pane` : ''}`
 
 const agentsSection = (input: BandInput, limit: number): Section | null => {
-  if (input.agents.length === 0) return null
   const sorted = newestFirst(input.agents)
   const running = sorted.filter(a => isActive(a.status))
   const build = (n: number) => {
     const shown = sorted.slice(0, Math.max(running.length, n))
-    const note = runNote(running.length, sorted.length, sorted.length - shown.length)
+    const note = sorted.length === 0 ? 'no subagents yet' : runNote(running.length, sorted.length, sorted.length - shown.length)
     return ruled(input, '🤖 AGENTS', note, table(input.canvas.els, AGENT_COLUMNS, [mainRow(input), ...shown.map(a => agentRow(input, a))], input.room))
   }
   const rows = Math.min(sorted.length, limit)
@@ -302,6 +302,7 @@ const agentsSection = (input: BandInput, limit: number): Section | null => {
     full: () => build(rows),
     mini: () =>
       lineOf(input, '🤖 AGENTS', [
+        ...(sorted.length === 0 ? [{ text: 'no subagents yet' }] : []),
         ...sorted.slice(0, 4).map(a => {
           const mark = statusMark(a.status, frame(input))
           return {
@@ -365,7 +366,7 @@ const shellsSection = (input: BandInput, limit: number): Section | null => {
 const USAGE_COLUMNS: Column[] = [
   { title: 'PERIOD', width: 6 },
   { title: 'COST', width: 7, align: 'right' },
-  { title: 'TOKENS', width: 6, align: 'right' },
+  { title: 'TOKENS', width: 7, align: 'right' },
   { title: 'VS BEFORE', width: 9, align: 'right', priority: 2 },
   { title: 'TOP MODELS', width: 10, grow: true, priority: 1 },
 ]
@@ -432,10 +433,10 @@ const liveSection = (input: BandInput): Section | null => {
   }
   const now: Part[] = input.live.map(t => {
     const ms = input.now - t.startedAt
-    return { text: `${t.tool}${ms >= 1000 ? ` ${elapsed(ms)}` : ''}${agentName(t.agentId)}`, color: 'text' }
+    return { text: `${toolName(t.tool)}${ms >= 1000 ? ` ${elapsed(ms)}` : ''}${agentName(t.agentId)}`, color: 'text' }
   })
   const counts = input.tools?.since === input.snap.startedAt ? [...input.tools.counts].sort((a, b) => b.count - a.count) : []
-  const top: Part[] = counts.slice(0, 8).map(c => ({ text: `${c.tool} ${c.count}` }))
+  const top: Part[] = counts.slice(0, 8).map(c => ({ text: `${toolName(c.tool)} ${c.count}` }))
   if (counts.length > 8) top.push({ text: `+${counts.length - 8}` })
   if (now.length === 0 && top.length === 0) return null
   const nowLine = () => lineOf(input, `${statusMark('running', frame(input)).glyph} NOW`, now)
@@ -453,45 +454,89 @@ const liveSection = (input: BandInput): Section | null => {
   }
 }
 
+/** How soon a section gets rows when they are short: lower first. */
+const RANK = { tokens: 0, agents: 1, live: 2, compaction: 3, usage: 4, shells: 5 }
+
+type Placed = { section: Section | null; rank: number }
+
 /**
- * Lays the sections out in the rows there are, never scrolling: every section gets one line
- * first, then the most important ones grow to full while they fit. One line per section that
- * does not fit at all is dropped, lowest priority first.
+ * Lays sections out in the rows there are, never scrolling. In rank order, every section gets
+ * one line (and a blank one before it) first, then grows to full while it fits; a section that
+ * does not get even its line is left out. They are drawn in the order given, whatever their rank.
  */
-const layout = (sections: (Section | null)[], budget: number) => {
-  const present = sections.filter((s): s is Section => s !== null)
-  const kept = present.slice(0, Math.max(0, budget))
-  let left = budget - kept.length
-  return kept.map(s => {
-    const extra = s.fullRows - 1
-    if (extra <= left) {
-      left -= extra
-      return s.full()
-    }
-    return s.mini()
-  })
+const layout = (input: BandInput, placed: Placed[], budget: number) => {
+  const { Box } = input.canvas.els
+  const present = placed.filter((p): p is { section: Section; rank: number } => p.section !== null)
+  const byRank = [...present].sort((a, b) => a.rank - b.rank)
+  const kept = new Set<Section>()
+  let used = 0
+  for (const p of byRank) {
+    const need = kept.size === 0 ? 1 : 2
+    if (used + need > budget) break
+    kept.add(p.section)
+    used += need
+  }
+  let left = budget - used
+  const isFull = new Set<Section>()
+  for (const p of byRank) {
+    const extra = p.section.fullRows - 1
+    if (!kept.has(p.section) || extra > left) continue
+    isFull.add(p.section)
+    left -= extra
+  }
+  const shown = present.filter(p => kept.has(p.section))
+  return (
+    <Box flexDirection="column">
+      {shown.map((p, i) => {
+        const body = isFull.has(p.section) ? p.section.full() : p.section.mini()
+        return i === 0 ? body : <Box marginTop={1}>{body}</Box>
+      })}
+    </Box>
+  )
 }
+
+/** A terminal this wide splits the sections in two columns: numbers left, work and agents right. */
+const TWO_COLUMNS_FROM = 150
+const COLUMN_GAP = 4
 
 /** The framed dashboard, its sections sized to the rows the band has. */
 export const drawBand = (input: BandInput, maxBandRows: number) => {
   const { Box } = input.canvas.els
   const inner = { ...input, room: input.room - FRAME_CELLS }
-  const budget = Math.min(input.rows, maxBandRows) - FRAME_ROWS - 2
-  // Table sections ask for as many rows as they could show; the layout trims the rest.
-  const sections = [
-    tokensSection(inner),
-    agentsSection(inner, Math.max(1, budget - 8)),
-    liveSection(inner),
-    compactionSection(inner),
-    usageSection(inner),
-    shellsSection(inner, Math.max(1, budget - 10)),
-  ]
-  return (
+  // The frame, the header, the meters and the blank line under them.
+  const budget = Math.min(input.rows, maxBandRows) - FRAME_ROWS - 3
+  const frame = (body: RenderChildren) => (
     <Box flexDirection="column" borderStyle="round" borderColor={ACCENT} paddingX={1}>
       {header(inner)}
       {meters(inner)}
-      {layout(sections, budget)}
+      <Box marginTop={1}>{body}</Box>
     </Box>
+  )
+  // Table sections ask for as many rows as they could show; the layout trims the rest.
+  const numbers = (at: BandInput): Placed[] => [
+    { section: tokensSection(at), rank: RANK.tokens },
+    { section: compactionSection(at), rank: RANK.compaction },
+    { section: usageSection(at), rank: RANK.usage },
+  ]
+  const work = (at: BandInput, rows: number): Placed[] => [
+    { section: liveSection(at), rank: RANK.live },
+    { section: shellsSection(at, Math.max(1, rows - 10)), rank: RANK.shells },
+    { section: agentsSection(at, Math.max(1, rows - 8)), rank: RANK.agents },
+  ]
+  if (inner.room < TWO_COLUMNS_FROM) return frame(layout(inner, [...numbers(inner), ...work(inner, budget - 10)], budget))
+
+  const leftRoom = Math.floor((inner.room - COLUMN_GAP) / 2)
+  const left = { ...inner, room: leftRoom }
+  const right = { ...inner, room: inner.room - COLUMN_GAP - leftRoom }
+  return frame(
+    <Box flexDirection="row" columnGap={COLUMN_GAP}>
+      <Box width={left.room} flexShrink={0}>
+        {layout(left, numbers(left), budget)}
+      </Box>
+      <Box width={right.room} flexShrink={0} flexDirection="column" justifyContent="flex-end">
+        {layout(right, work(right, budget), budget)}
+      </Box>
+    </Box>,
   )
 }
 
@@ -502,16 +547,18 @@ export const drawAll = (input: BandInput) => {
   const sections = [
     tokensSection(inner),
     compactionSection(inner),
-    agentsSection(inner, 40),
-    shellsSection(inner, 40),
-    liveSection(inner),
     usageSection(inner),
-  ]
+    liveSection(inner),
+    shellsSection(inner, 40),
+    agentsSection(inner, 40),
+  ].filter((s): s is Section => s !== null)
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={ACCENT} paddingX={1}>
       {header(inner)}
       {meters(inner)}
-      {sections.map(s => (s === null ? null : s.full()))}
+      {sections.map(s => (
+        <Box marginTop={1}>{s.full()}</Box>
+      ))}
     </Box>
   )
 }

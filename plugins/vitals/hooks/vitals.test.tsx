@@ -214,7 +214,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
     fakeEngine(on)
     await runSession($)
 
-    const band = await bandText($, surface)
+    // A wide terminal: two columns, the numbers left, the work and the agents right.
+    const band = await bandText($, surface, { ...PROPS, bodyColumns: 200 })
     const expected = [
       '◆ VITALS',
       '🧠 ',
@@ -255,9 +256,18 @@ for (const surface of ['terminal', 'desktop'] as const) {
     fakeEngine(on)
     await runSession($)
 
-    const band = await bandText($, surface, { ...PROPS, maxRows: 12, scroll: { offset: 0, bodyRows: 12 } })
+    const band = await bandText($, surface, { ...PROPS, maxRows: 16, scroll: { offset: 0, bodyRows: 16 } })
     for (const text of ['🔥 TOKENS', '🤖 AGENTS', '📊 USAGE', '🐚 SHELLS', 'hit 97%']) expect(band).toContain(text)
     expect(band).not.toContain('CACHE R')
+  })
+
+  test(`${surface}: one column draws the agents last, below the usage`, async ($, on) => {
+    fakeEngine(on)
+    await runSession($)
+
+    const band = await bandText($, surface)
+    expect(band.indexOf('🤖 AGENTS')).toBeGreaterThan(band.indexOf('📊 USAGE'))
+    expect(band).toContain('Review the diff')
   })
 
   test(`${surface}: a task notification ends the shell it names`, async ($, on) => {
