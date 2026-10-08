@@ -45,6 +45,12 @@ Commands:
 
 The level you pick stays for the sessions that follow.
 
+## Screenshots
+
+**`/vitals-low`**: the vitals box alone, in a terminal 200 columns wide.
+
+![vitals-low: model, effort, folder and branch, session time and cost, burn rate; bars for context, compaction, 5-hour and weekly limits; the forecast of both limits](docs/screenshots/vitals-low.png)
+
 ## What it shows
 
 | Section | Contents |
