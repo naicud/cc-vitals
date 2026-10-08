@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ProcessRunResult, Register, SessionUsage } from 'claude-code'
 
-import type { AgentStat, LiveTool, RunStatus, ShellStat, Snapshot, Tokens } from '../types'
+import type { AgentStat, ContextPart, LiveTool, RunStatus, ShellStat, Snapshot, Tokens } from '../types'
 import { drawAll, drawBand, drawCompact } from './band'
 import type { BandInput } from './band'
 import {
@@ -10,6 +10,7 @@ import {
   agentTokens,
   agentTool,
   compactionOf,
+  contextPartsOf,
   configuredEffort,
   countError,
   countTool,
@@ -22,6 +23,8 @@ import {
   placeOf,
   startLive,
 } from './collect'
+import { addSample, forecast } from './forecast'
+import type { Sample } from './forecast'
 import { NO_TOKENS, addTokens, toTokens } from './format'
 import { historySince, localDate, parseDaily } from './report'
 import { drawReport } from './report-view'
@@ -60,6 +63,9 @@ let gitAt = 0
 let gitPlace: ReturnType<typeof placeOf> | null = null
 let breakdownAt = 0
 let compaction: ReturnType<typeof compactionOf> = { compactWindow: null, autoCompactAt: null }
+let contextParts: ContextPart[] | null = null
+// The plan limits' recent readings, for the pace of the forecast.
+const limitSamples = new Map<string, Sample[]>()
 let isReadingHistory = false
 
 // Each command is written out in full at its call; this only reads the result.
@@ -87,7 +93,8 @@ async function setShells($: EngineInterface, fn: (list: ShellStat[]) => ShellSta
 /** Draws a measurement into the meters at once: no call, the figures came with the event. */
 async function applyMeasure($: EngineInterface, measured: Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>, now: number) {
   const meters = metersOf(measured, compaction.compactWindow)
-  await update($, snapshot, s => (s === null ? s : { ...s, ...meters, autoCompactAt: compaction.autoCompactAt, at: now }))
+  for (const l of meters.limits) limitSamples.set(l.kind, addSample(limitSamples.get(l.kind) ?? [], { at: now, percent: l.percent }))
+  await update($, snapshot, s => (s === null ? s : { ...s, ...meters, autoCompactAt: compaction.autoCompactAt, contextParts, at: now }))
   const warnings = limitWarnings(meters.limits, await read($, warned), now)
   for (const w of warnings) $.ui.toast(w.text, { timeoutMs: 8000 })
   if (warnings.length > 0) await update($, warned, s => [...s, ...warnings.map(w => w.key)].slice(-50))
@@ -107,6 +114,7 @@ async function refresh($: EngineInterface) {
   if (isBreakdownDue) {
     breakdownAt = now
     compaction = compactionOf(usage.context.breakdown)
+    contextParts = contextPartsOf(usage.context.breakdown) ?? contextParts
   }
   if (gitPlace === null || now - gitAt >= GIT_EVERY_MS) {
     gitAt = now
@@ -128,6 +136,7 @@ async function refresh($: EngineInterface) {
     ...gitPlace,
     ...metersOf(usage, compaction.compactWindow),
     autoCompactAt: compaction.autoCompactAt,
+    contextParts,
   }
   await update($, snapshot, () => snap)
   await setAgents($, list => mergeRoster(list, roster, now))
@@ -257,6 +266,7 @@ async function gather($: EngineInterface, canvas: Canvas, room: number, rows: nu
     tools: toolCounts,
     history: past,
     historyProblem: problem,
+    forecasts: snap.limits.flatMap(l => forecast(l, limitSamples.get(l.kind) ?? [], now) ?? []),
     cacheTtlMs,
   }
   return input

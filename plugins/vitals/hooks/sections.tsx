@@ -1,6 +1,6 @@
 import type { RenderChildren } from 'claude-code'
 
-import type { AgentStat, Compactions, HistoryProblem, LiveTool, ShellStat, Snapshot, ToolCounts, Totals, TurnStat, UsageHistory } from '../types'
+import type { AgentStat, Compactions, ContextPart, HistoryProblem, LiveTool, ShellStat, Snapshot, ToolCounts, Totals, TurnStat, UsageHistory } from '../types'
 import {
   NO_TOKENS,
   addTokens,
@@ -19,8 +19,9 @@ import {
   totalTokens,
 } from './format'
 import type { Part } from './format'
+import type { Forecast } from './forecast'
 import { change, dailyCosts, localDate, modelShares, periods } from './report'
-import { ACCENT, CARD_CELLS, CARD_ROWS, blocks, card, parts, sparkline, table } from './ui'
+import { ACCENT, CARD_CELLS, CARD_ROWS, blocks, card, cellWidth, parts, sparkline, table } from './ui'
 import type { Canvas, Cell, Column } from './ui'
 
 export type BandInput = {
@@ -42,6 +43,7 @@ export type BandInput = {
   tools: ToolCounts | null
   history: UsageHistory | null
   historyProblem: HistoryProblem | null
+  forecasts: Forecast[]
   cacheTtlMs: number
 }
 
@@ -381,5 +383,96 @@ export const usageSection = (input: BandInput, room: number): Section | null => 
         ...spans.map(p => ({ text: `${p.name} ${money(p.now.costUsd)}`, emphasis: 'strong' as const })),
         { text: sparkline(costs), color: ACCENT },
       ]),
+  }
+}
+
+const LEGEND_GAP = 3
+
+/** Splits `cells` among parts by their tokens, the rounding spread so the bar fills exactly. */
+const shares = (tokens: number[], cells: number) => {
+  const total = tokens.reduce((s, t) => s + t, 0)
+  if (total <= 0) return tokens.map(() => 0)
+  const exact = tokens.map(t => (t / total) * cells)
+  const whole = exact.map(Math.floor)
+  let left = cells - whole.reduce((s, w) => s + w, 0)
+  const byRemainder = exact.map((e, i) => ({ i, r: e - Math.floor(e) })).sort((a, b) => b.r - a.r)
+  for (const { i } of byRemainder) {
+    if (left <= 0) break
+    whole[i] = (whole[i] ?? 0) + 1
+    left -= 1
+  }
+  return whole
+}
+
+const partGlyph = (kind: ContextPart['kind']) => (kind === 'free' ? '░' : kind === 'buffer' ? '▒' : '█')
+
+/** What fills the context, as /context breaks it down: one bar in its colours and a legend. */
+export const contextSection = (input: BandInput, room: number): Section | null => {
+  const partsOf = input.snap.contextParts
+  if (partsOf === null || partsOf.length === 0) return null
+  const { Box, Text } = input.canvas.els
+  const inner = room - CARD_CELLS
+  const total = partsOf.reduce((s, p) => s + p.tokens, 0)
+  const cells = shares(partsOf.map(p => p.tokens), inner)
+  const items = partsOf.map(p => ({
+    part: p,
+    text: `${p.name} ${count(p.tokens)} ${total > 0 ? Math.round((p.tokens / total) * 100) : 0}%`,
+  }))
+  // The legend packed into rows by width, so its height is known before it is drawn.
+  const legend: (typeof items)[] = [[]]
+  let width = 0
+  for (const item of items) {
+    const w = 2 + cellWidth(item.text) + LEGEND_GAP
+    const row = legend[legend.length - 1]
+    if (row !== undefined && row.length > 0 && width + w > inner) {
+      legend.push([item])
+      width = w
+    } else {
+      row?.push(item)
+      width += w
+    }
+  }
+  const used = partsOf.filter(p => p.kind === 'used').reduce((s, p) => s + p.tokens, 0)
+  const swatch = (p: ContextPart) => (p.kind === 'free' ? { dim: true } : { color: p.color })
+  return {
+    fullRows: CARD_ROWS + 1 + legend.length,
+    full: () =>
+      card(
+        input.canvas.els,
+        '🧩 CONTEXT',
+        `${count(used)} used of ${count(total)} · estimate`,
+        room,
+        <Box flexDirection="column">
+          <Box flexDirection="row">
+            {partsOf.map((p, i) =>
+              (cells[i] ?? 0) > 0 ? (
+                <Text color={swatch(p).color} dimColor={swatch(p).dim}>
+                  {partGlyph(p.kind).repeat(cells[i] ?? 0)}
+                </Text>
+              ) : null,
+            )}
+          </Box>
+          {legend.map(row => (
+            <Box flexDirection="row">
+              {row.map(({ part, text }) => (
+                <Box flexDirection="row" marginRight={LEGEND_GAP}>
+                  <Text color={swatch(part).color} dimColor={swatch(part).dim}>{`${partGlyph(part.kind)} `}</Text>
+                  <Text dimColor={part.kind !== 'used'}>{text}</Text>
+                </Box>
+              ))}
+            </Box>
+          ))}
+        </Box>,
+      ),
+    mini: () =>
+      lineOf(
+        input,
+        '🧩 CONTEXT',
+        [...partsOf]
+          .filter(p => p.kind === 'used')
+          .sort((a, b) => b.tokens - a.tokens)
+          .slice(0, 4)
+          .map(p => ({ text: `${p.name} ${count(p.tokens)}`, color: p.color })),
+      ),
   }
 }

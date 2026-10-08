@@ -8,6 +8,7 @@ Model and reasoning effort, context and plan limits, cost and burn rate, tokens 
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ ◆ VITALS   🧠 Opus 5.5 1M   ⚡ HIGH ▰▰▰▱▱                     📁 cc-vitals  🌿 main ↓7   ⏳ 1h 20m · 7 prompts   💸 $16.18  🔥 $12.11/h │
 │ ⛽ CTX ████████▊░░░░░░░░ 44% 435k/1M │ 🗜 COMPACT █████████▏░░░░░░░ 45% 532k to go │ ⏳ 5H LIMIT ███████▏░░░░░░░░ 45% ↻ 2h 19m │ 📅 WEEKLY ██▏░░░░ 13% ↻ 6d 4h │
+│ 🔮 FORECAST  5H LIMIT out at 14:05, reset 15:30 ⚠ (last hour) · WEEKLY ≈ 61% at reset ✓ (window avg)                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─────────────────────────────────────────────────────────────────╮  ╭─────────────────────────────────────────────────────────────────╮
 │ 🔥 TOKENS                     🧊 cache warm · expires in 54m     │  │ 🤖 AGENTS                               1 running · 2 done      │
@@ -27,14 +28,13 @@ Model and reasoning effort, context and plan limits, cost and burn rate, tokens 
 ╰─────────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────────────────────────────────╯
 ```
 
-Every part has its own box. ◆ VITALS sits on top across the whole width: the header and four bars, ⛽ CTX (context window), 🗜 COMPACT (how far the context is on its way to auto-compaction), ⏳ 5H LIMIT and 📅 WEEKLY (plan limits). Under it, on a terminal 150 columns wide or more, two columns: 🔥 TOKENS and 📊 USAGE on the left, 🤖 AGENTS, 🔧 TOOLS and 🐚 SHELLS on the right, agents on top. Narrower, one column: tokens, agents, tools, shells, usage.
+Every part has its own box. ◆ VITALS sits on top across the whole width: the header, four bars, ⛽ CTX (context window), 🗜 COMPACT (how far the context is on its way to auto-compaction), ⏳ 5H LIMIT and 📅 WEEKLY (plan limits), and the 🔮 FORECAST of both limits at your current pace. Under it, on a terminal 150 columns wide or more, two columns: 🔥 TOKENS, 🧩 CONTEXT and 📊 USAGE on the left, 🤖 AGENTS, 🔧 TOOLS and 🐚 SHELLS on the right, agents on top. Narrower, one column: tokens, agents, tools, shells, context, usage.
 
-The band never scrolls (at most 40 rows). Every section gets one line first, then the most important ones grow to their full box while they fit: tokens, agents, tools, usage, shells. A short terminal, or one where Claude's progress takes the space, gets one line each instead of losing sections off the bottom.
+The band never scrolls (at most 40 rows). Every section gets one line first, then the most important ones grow to their full box while they fit: tokens, agents, tools, context, usage, shells. A short terminal, or one where Claude's progress takes the space, gets one line each instead of losing sections off the bottom.
 
 Commands:
 
-- `/vitals` switches between the dashboard and one compact line:
-  `🧠 Opus 5.5 1M · ⚡ high · ⛽ 68% · ⏳ 42% · 📅 85% · 🧊 97% · 💸 $4.21 · 📊 week $100`
+- `/vitals` switches between the full dashboard (the default) and the small one: the ◆ VITALS box alone, with the session, the four bars and the forecast.
 - `/vitals pane` opens a pane with every section in full: every agent, every shell, every tool.
 - `/vitals report` opens the usage report: the last 14 days, the last 6 weeks, this month and the last, and this month's models, each with bars.
 
@@ -44,6 +44,8 @@ Commands:
 | :-- | :-- |
 | Header | 🧠 model, ⚡ the reasoning effort the last request used (pips out of five), 📁 folder, 🌿 branch (🌳 in a worktree), ahead/behind, changed files, ⏳ session age, prompts, 💸 cost, 🔥 burn rate per hour |
 | Meters | ⛽ CTX, the context window (against the auto-compact window when one is set, as `/context` does); 🗜 COMPACT, the context against the auto-compact threshold, tokens left and compactions so far; ⏳ 5H LIMIT and 📅 WEEKLY plan limits with reset countdowns. Bars at an eighth of a cell, two to a row when the terminal is narrow |
+| 🔮 Forecast | Each plan limit at the pace you spend it: the last hour's pace once there are ten minutes of it, else the window's average. Either when it runs out before its reset (⚠), or where it will stand at the reset (✓) |
+| 🧩 Context | What fills the context, as `/context` breaks it down: one bar in its colours (system prompt, tools, memory, skills, messages, ░ free, ▒ autocompact buffer) and a legend with tokens and shares. An estimate, read every 5 minutes |
 | 🔥 Tokens | Last main turn and whole session (subagents included): in, out, cache read, cache write, hit rate, total; idle time, 🧊 cache warm with the time until it expires, or 🥶 cold past the prompt-cache TTL. An interrupted turn keeps the last counted one on show |
 | 🤖 Agents | The main loop and every subagent: status (spinner while it runs, ✓ ✗ ■ when it ended), task, type, the model and effort its requests actually used, tokens, hit rate, tool calls, time. Ended ones stay, dimmed, until newer ones push them out |
 | 🔧 Tools | One row per tool the session called: a spinner while one runs, calls, errors, a bar of its share of the calls, and what runs now (elapsed, how many at once, which agent). MCP tools by their short name |
@@ -61,7 +63,7 @@ Meters turn amber at 80% and red at 95%; a cache hit rate under 50% and a cold c
 | Context, plan limits, cost | As Claude Code measures them: the figures come with the event, no call is made |
 | Model, effort, tokens, tools, agents, shells | From the events that already happen (each request, turn, tool call, notification) |
 | `git status` and `rev-parse` | At most every 20 seconds |
-| The `/context` estimate (auto-compact threshold) | Every 5 minutes and after a compaction |
+| The `/context` estimate (auto-compact threshold, context breakdown) | Every 5 minutes and after a compaction |
 | `ccusage claude daily` | In the background, at most every 15 minutes, kept across sessions so a new one draws it at once |
 | Redraw | Once a second only while something runs (spinners, elapsed times); idle, only when a value changes |
 
@@ -145,6 +147,7 @@ plugins/vitals/
   hooks/band.tsx                  the vitals box, the meters and the row-budget layout
   hooks/sections.tsx              the section boxes: tokens, agents, tools, shells, usage
   hooks/report.ts                 ccusage parsing and day/week/month folds
+  hooks/forecast.ts               plan-limit pace and forecast
   hooks/report-view.tsx           the /vitals report pane
   hooks/ui.tsx                    boxes, rules, ruled tables, meters, bars, sparklines
   hooks/format.ts                 number, model, status and token formatting

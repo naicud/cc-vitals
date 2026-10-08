@@ -1,9 +1,9 @@
 import type { RenderChildren } from 'claude-code'
 
-import { ago, count, effortPips, hitRate, isActive, limitShortLabel, money, prettyModel, statusMark, tone, until } from './format'
+import { ago, count, effortPips, limitShortLabel, money, prettyModel, until } from './format'
 import type { Part } from './format'
-import { localDate, periods } from './report'
-import { agentsSection, effortCell, frame, shellsSection, tokensSection, toolsSection, usageSection } from './sections'
+import type { Forecast } from './forecast'
+import { agentsSection, contextSection, effortCell, shellsSection, tokensSection, toolsSection, usageSection } from './sections'
 import type { BandInput, Section } from './sections'
 import { ACCENT, CARD_CELLS, meter, meterChrome, parts } from './ui'
 
@@ -18,7 +18,7 @@ const MAX_BAR = 24
 const METER_GAP = 3
 
 /** How soon a section gets rows when they are short: lower first. */
-const RANK = { tokens: 0, agents: 1, tools: 2, usage: 3, shells: 4 }
+const RANK = { tokens: 0, agents: 1, tools: 2, context: 3, usage: 4, shells: 5 }
 
 /** A terminal this wide splits the sections in two columns: numbers left, agents and work right. */
 const TWO_COLUMNS_FROM = 150
@@ -63,6 +63,25 @@ const meterRows = (items: Item[], room: number) => {
   return all.bar >= MIN_BAR || items.length <= 2 ? all : fit(2)
 }
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/** A moment as a glance reads it: `14:05` today, `Thu 14:05` further off. */
+const clockTime = (ms: number, now: number) => {
+  const d = new Date(ms)
+  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return ms - now < 20 * 3_600_000 && d.getDate() === new Date(now).getDate() ? hhmm : `${WEEKDAYS[d.getDay()] ?? ''} ${hhmm}`
+}
+
+/** Each limit at this pace: when it runs out before its reset, or where it stands at the reset. */
+const forecastParts = (forecasts: Forecast[], now: number): Part[] =>
+  forecasts.map(f => {
+    const name = LIMIT_LABELS[f.kind] ?? limitShortLabel(f.kind)
+    const pace = f.pace === 'recent' ? 'last hour' : 'window avg'
+    return f.outAt === null
+      ? { text: `${name} ≈ ${f.atReset}% at reset ✓ (${pace})`, color: f.atReset >= 80 ? 'warning' : 'success' }
+      : { text: `${name} out at ${clockTime(f.outAt, now)}, reset ${clockTime(f.resetAt, now)} ⚠ (${pace})`, emphasis: 'warning' as const }
+  })
+
 /** The top box: model, effort, where, session, cost; then the meters. */
 const vitals = (input: BandInput, room: number) => {
   const { Box, Text } = input.canvas.els
@@ -75,8 +94,9 @@ const vitals = (input: BandInput, room: number) => {
   const burn = snap.costUsd !== null && ageMs >= 5 * 60_000 ? `  🔥 ${money(snap.costUsd / (ageMs / 3_600_000))}/h` : ''
   const level = effortCell(input.effort)
   const { rows, bar } = meterRows(meterItems(input), room - CARD_CELLS)
+  const ahead = forecastParts(input.forecasts, input.now)
   return {
-    rows: 2 + 1 + rows.length,
+    rows: 2 + 1 + rows.length + (ahead.length > 0 ? 1 : 0),
     box: (
       <Box flexDirection="column" width={room} borderStyle="round" borderColor={ACCENT} paddingX={1}>
         <Box flexDirection="row" justifyContent="space-between">
@@ -104,6 +124,14 @@ const vitals = (input: BandInput, room: number) => {
             ))}
           </Box>
         ))}
+        {ahead.length > 0 && (
+          <Box flexDirection="row">
+            <Box width={13} flexShrink={0}>
+              <Text bold color={ACCENT}>{'🔮 FORECAST'}</Text>
+            </Box>
+            {parts(input.canvas.els, ahead)}
+          </Box>
+        )}
       </Box>
     ),
   }
@@ -136,9 +164,10 @@ const layout = (input: BandInput, placed: Placed[], budget: number) => {
   )
 }
 
-/** The numbers: tokens and usage. */
+/** The numbers: tokens, what fills the context, and usage. */
 const numbers = (input: BandInput, room: number): Placed[] => [
   { section: tokensSection(input, room), rank: RANK.tokens },
+  { section: contextSection(input, room), rank: RANK.context },
   { section: usageSection(input, room), rank: RANK.usage },
 ]
 
@@ -156,8 +185,9 @@ export const drawBand = (input: BandInput, maxBandRows: number) => {
   const budget = Math.min(input.rows, maxBandRows) - top.rows
   let body: RenderChildren
   if (input.room < TWO_COLUMNS_FROM) {
-    const [tokens, usage] = numbers(input, input.room)
-    body = layout(input, [tokens ?? { section: null, rank: 0 }, ...work(input, input.room, budget - 10), usage ?? { section: null, rank: 0 }], budget)
+    const [tokens, context, usage] = numbers(input, input.room)
+    const none = { section: null, rank: 0 }
+    body = layout(input, [tokens ?? none, ...work(input, input.room, budget - 10), context ?? none, usage ?? none], budget)
   } else {
     const leftRoom = Math.floor((input.room - COLUMN_GAP) / 2)
     const rightRoom = input.room - COLUMN_GAP - leftRoom
@@ -185,6 +215,7 @@ export const drawAll = (input: BandInput) => {
   const { Box } = input.canvas.els
   const sections = [
     tokensSection(input, input.room),
+    contextSection(input, input.room),
     agentsSection(input, input.room, 40),
     toolsSection(input, input.room, 40),
     shellsSection(input, input.room, 40),
@@ -198,25 +229,5 @@ export const drawAll = (input: BandInput) => {
   )
 }
 
-// One line for small windows: model, effort, context, limits, cache hit, cost, week, what runs.
-export const drawCompact = (input: BandInput) => {
-  const { snap, turn } = input
-  const hit = turn?.tokens ? hitRate(turn.tokens) : null
-  const runningAgents = input.agents.filter(a => isActive(a.status)).length
-  const runningShells = input.shells.filter(s => isActive(s.status)).length
-  const level = effortCell(input.effort)
-  const week = input.history === null ? undefined : periods(input.history.days, localDate(input.now))[1]
-  const warnIf = (percent: number) => (tone(percent) === undefined ? undefined : ('warning' as const))
-  const list: Part[] = [
-    { text: `🧠 ${prettyModel(snap.model)}`, emphasis: 'strong' },
-    ...(input.effort === null ? [] : [{ text: `⚡ ${input.effort}`, color: level.color }]),
-    ...(snap.contextPercent === null ? [] : [{ text: `⛽ ${snap.contextPercent}%`, emphasis: warnIf(snap.contextPercent) }]),
-    ...snap.limits.map(l => ({ text: `${LIMIT_ICONS[l.kind] ?? '⏳'} ${l.percent}%`, emphasis: warnIf(l.percent) })),
-    ...(hit === null ? [] : [{ text: `🧊 ${hit}%`, emphasis: hit < 50 ? ('warning' as const) : undefined }]),
-    ...(snap.costUsd === null ? [] : [{ text: `💸 ${money(snap.costUsd)}`, emphasis: 'strong' as const }]),
-    ...(week === undefined ? [] : [{ text: `📊 week ${money(week.now.costUsd)}` }]),
-    ...(runningAgents === 0 ? [] : [{ text: `${statusMark('running', frame(input)).glyph} 🤖 ${runningAgents}`, color: ACCENT }]),
-    ...(runningShells === 0 ? [] : [{ text: `🐚 ${runningShells}`, color: ACCENT }]),
-  ]
-  return parts(input.canvas.els, list)
-}
+/** The small dashboard: the vitals box alone, header, meters and forecast. */
+export const drawCompact = (input: BandInput) => vitals(input, input.room).box

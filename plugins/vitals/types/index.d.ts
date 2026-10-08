@@ -20,7 +20,12 @@ export type Snapshot = {
   limits: Limit[]
   /** The token count auto-compaction runs at, or null when it is off or not read yet. */
   autoCompactAt: number | null
+  /** What fills the context, as /context breaks it down (estimated); null until first read. */
+  contextParts: ContextPart[] | null
 }
+
+/** One row of the context's breakdown: its tokens and the theme colour /context draws it in. */
+export type ContextPart = { name: string; tokens: number; color: string; kind: 'used' | 'free' | 'buffer' }
 
 export type TurnStat = {
   at: number

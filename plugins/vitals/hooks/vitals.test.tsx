@@ -4,6 +4,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { mergeRoster, parseNotification } from './collect'
 import { count, hitRate, prettyModel } from './format'
+import { forecast } from './forecast'
 import { parseDaily, periods, weekStart } from './report'
 import { blocks, cellWidth, fitColumns } from './ui'
 
@@ -83,11 +84,24 @@ const fakeEngine = (on: On, toasts: string[] = []) => {
         percent: 68,
         ...(e.breakdown === undefined
           ? {}
-          : { breakdown: { isAutoCompactEnabled: true, rawMaxTokens: 1_000_000, autoCompactThreshold: 900_000 } as never }),
+          : {
+              breakdown: {
+                isAutoCompactEnabled: true,
+                rawMaxTokens: 1_000_000,
+                autoCompactThreshold: 900_000,
+                categories: [
+                  { name: 'System prompt', tokens: 20_000, color: 'promptBorder', isDeferred: false, kind: 'used' },
+                  { name: 'Messages', tokens: 660_000, color: 'permission', isDeferred: false, kind: 'used' },
+                  { name: 'MCP tools', tokens: 30_000, color: 'ide', isDeferred: true, kind: 'deferred' },
+                  { name: 'Free space', tokens: 275_000, color: 'inactive', isDeferred: false, kind: 'free' },
+                  { name: 'Autocompact buffer', tokens: 45_000, color: 'warning', isDeferred: false, kind: 'buffer' },
+                ],
+              } as never,
+            }),
       },
       rateLimits: [
-        { kind: 'five_hour', percentUsed: 42 },
-        { kind: 'seven_day', percentUsed: 85 },
+        { kind: 'five_hour', percentUsed: 42, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() },
+        { kind: 'seven_day', percentUsed: 85, resetsAt: new Date(NOW + 3 * 86_400_000).toISOString() },
       ],
       cost: { usd: 4.21 },
     },
@@ -169,6 +183,17 @@ test('bars resolve to an eighth of a cell', () => {
   expect(blocks(55, 10)).toEqual({ filled: '█████▌', track: '░░░░' })
 })
 
+test('a limit forecast uses the window average, then the last hour once there is enough of it', () => {
+  const resetsAt = new Date(NOW + 2 * 3_600_000).toISOString()
+  // Three hours into a 5-hour window at 42%: 14% an hour, 70% at the reset.
+  expect(forecast({ kind: 'five_hour', percent: 42, resetsAt }, [], NOW)).toMatchObject({ atReset: 70, outAt: null, pace: 'average' })
+  // Up 20 points in the last 20 minutes: 60% an hour, out 58 minutes from now.
+  const fast = forecast({ kind: 'five_hour', percent: 42, resetsAt }, [{ at: NOW - 20 * 60_000, percent: 22 }], NOW)
+  expect(fast?.pace).toBe('recent')
+  expect(Math.round(((fast?.outAt ?? 0) - NOW) / 60_000)).toBe(58)
+  expect(forecast({ kind: 'spend_limit', percent: 10, resetsAt }, [], NOW)).toBe(null)
+})
+
 test('a task notification names each task and how it ended', () => {
   const text =
     '<task-notification><task-id>b8f2</task-id><status>completed</status></task-notification>' +
@@ -247,6 +272,12 @@ for (const surface of ['terminal', 'desktop'] as const) {
       'week',
       '$100',
       '▲ +150%',
+      '🔮 FORECAST',
+      '5H LIMIT ≈ 70% at reset ✓ (window avg)',
+      'WEEKLY out at',
+      '🧩 CONTEXT',
+      'Messages 660k',
+      'Free space 275k',
       '🔧 TOOLS',
       'CALLS',
       '1 calls · 0 errors',
@@ -258,7 +289,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     fakeEngine(on)
     await runSession($)
 
-    const band = await bandText($, surface, { ...PROPS, maxRows: 10, scroll: { offset: 0, bodyRows: 10 } })
+    const band = await bandText($, surface, { ...PROPS, maxRows: 12, scroll: { offset: 0, bodyRows: 12 } })
     for (const text of ['🔥 TOKENS', '🤖 AGENTS', '📊 USAGE', '🐚 SHELLS', 'hit 97%']) expect(band).toContain(text)
     expect(band).not.toContain('CACHE R')
   })
@@ -285,14 +316,14 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await bandText($, surface)).toContain('completed')
   })
 
-  test(`${surface}: /vitals switches to one compact line`, async ($, on) => {
+  test(`${surface}: /vitals switches to the vitals box alone`, async ($, on) => {
     fakeEngine(on)
     await runSession($)
     await $.command.run({ command: 'vitals', args: '', ...COMMAND })
 
     const band = await bandText($, surface)
-    expect(band).toContain('🧠 Opus 5.5 1M · ⚡ high · ⛽ 68% · ⏳ 42% · 📅 85% · 🧊 97% · 💸 $4.21 · 📊 week $100')
-    expect(band).not.toContain('AGENTS')
+    for (const text of ['◆ VITALS', '⛽ CTX', '🗜 COMPACT', '⏳ 5H LIMIT', '📅 WEEKLY', '🔮 FORECAST', '💸 $4.21']) expect(band).toContain(text)
+    for (const text of ['🔥 TOKENS', '🤖 AGENTS', '📊 USAGE']) expect(band).not.toContain(text)
   })
 
   test(`${surface}: /vitals report draws days, weeks, months and models`, async ($, on) => {
@@ -318,5 +349,5 @@ test('a plan limit past 80% raises one toast', async ($, on) => {
   fakeEngine(on, toasts)
   await runSession($)
 
-  expect(toasts).toEqual(['Weekly usage limit at 85%'])
+  expect(toasts).toEqual(['Weekly usage limit at 85% · resets in 3d 0h'])
 })

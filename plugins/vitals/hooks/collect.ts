@@ -1,6 +1,6 @@
 import type { AgentInfo, ConfigRow, SessionContextBreakdown, SessionUsage } from 'claude-code'
 
-import type { AgentStat, Limit, LiveTool, RunStatus, ShellStat, ToolCounts, Tokens } from '../types'
+import type { AgentStat, ContextPart, Limit, LiveTool, RunStatus, ShellStat, ToolCounts, Tokens } from '../types'
 import { NO_TOKENS, addTokens, isActive, limitLabel, notifiedStatus, runStatus, until } from './format'
 
 // Pure folds over the session's values: register.tsx reads the engine and writes the results.
@@ -42,6 +42,14 @@ export const metersOf = (
     limits: measured.rateLimits.map(r => ({ kind: r.kind, percent: r.percentUsed, resetsAt: r.resetsAt ?? null })),
   }
 }
+
+/** The rows of a `/context` breakdown that take room in the window: deferred tool schemas do not. */
+export const contextPartsOf = (breakdown: SessionContextBreakdown | undefined): ContextPart[] | null =>
+  breakdown === undefined
+    ? null
+    : breakdown.categories.flatMap(c =>
+        c.kind === 'deferred' || c.tokens <= 0 ? [] : [{ name: c.name, tokens: c.tokens, color: c.color, kind: c.kind }],
+      )
 
 /** The compaction window and threshold a `/context` breakdown reports, when auto-compaction is on. */
 export const compactionOf = (breakdown: SessionContextBreakdown | undefined) => ({
