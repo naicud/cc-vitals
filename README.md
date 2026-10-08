@@ -51,6 +51,10 @@ The level you pick stays for the sessions that follow.
 
 ![vitals-low: model, effort, folder and branch, session time and cost, burn rate; bars for context, compaction, 5-hour and weekly limits; the forecast of both limits](docs/screenshots/vitals-low.png)
 
+**`/vitals-medium`**: the vitals box, what fills the context, and the agents side by side.
+
+![vitals-medium: the vitals box; the context bar in /context's colours with its legend (system prompt, tools, MCP, memory, skills, messages, autocompact buffer, free space); the agents table with the main loop and a Haiku subagent, their model, effort, tokens, hit rate and time](docs/screenshots/vitals-medium.png)
+
 ## What it shows
 
 | Section | Contents |
