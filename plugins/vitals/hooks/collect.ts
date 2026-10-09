@@ -43,6 +43,69 @@ export const metersOf = (
   }
 }
 
+/** The plan windows read from the account's usage endpoint; the rest of its answer is not read. */
+const PLAN_WINDOWS = ['five_hour', 'seven_day']
+
+/**
+ * The plan limits in an answer of `/api/oauth/usage`, the figures claude.ai's usage page shows:
+ * null for an answer that is not JSON. A window the answer leaves out or nulls is left out.
+ */
+export const parsePlanUsage = (text: string): Limit[] | null => {
+  let body: unknown
+  try {
+    body = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (typeof body !== 'object' || body === null) return null
+  return PLAN_WINDOWS.flatMap(kind => {
+    const window: unknown = Reflect.get(body, kind)
+    if (typeof window !== 'object' || window === null) return []
+    const utilization: unknown = Reflect.get(window, 'utilization')
+    const resetsAt: unknown = Reflect.get(window, 'resets_at')
+    if (typeof utilization !== 'number' || !Number.isFinite(utilization)) return []
+    const end = typeof resetsAt === 'string' ? Date.parse(resetsAt) : NaN
+    return [{ kind, percent: Math.round(utilization * 10) / 10, resetsAt: Number.isFinite(end) ? new Date(end).toISOString() : null }]
+  })
+}
+
+/** Two readings of one window end within this of each other; two windows of a kind end hours apart. */
+const SAME_WINDOW_MS = 60 * 60_000
+
+const endOf = (limit: Limit) => {
+  const end = limit.resetsAt === null ? NaN : Date.parse(limit.resetsAt)
+  return Number.isFinite(end) ? end : null
+}
+
+/**
+ * One limit from two readings of it. Within a window usage only grows, so of two readings of the
+ * same window the higher is the truth, whichever source took it and whenever; a window that has
+ * ended loses to one that has not, an earlier window to a later one, an unknown end to a known one.
+ */
+const pickLimit = (a: Limit, b: Limit, now: number) => {
+  const [endA, endB] = [endOf(a), endOf(b)]
+  const [isOverA, isOverB] = [endA !== null && endA <= now, endB !== null && endB <= now]
+  if (isOverA !== isOverB) return isOverA ? b : a
+  if (endA === null && endB !== null) return b
+  if (endB === null && endA !== null) return a
+  if (endA !== null && endB !== null && Math.abs(endA - endB) >= SAME_WINDOW_MS) return endA > endB ? a : b
+  return a.percent >= b.percent ? a : b
+}
+
+/**
+ * The plan limits from this session's last API response and the account's usage endpoint, one per
+ * window. Each end is set to the minute, so one window reads the same from either source (the
+ * headers spell it in whole seconds, the endpoint to the microsecond) and its toasts raise once.
+ */
+export const mergeLimits = (measured: Limit[], plan: Limit[], now: number): Limit[] =>
+  [...new Set([...measured, ...plan].map(l => l.kind))].flatMap(kind => {
+    const [a, b] = [measured.find(l => l.kind === kind), plan.find(l => l.kind === kind)]
+    const limit = a !== undefined && b !== undefined ? pickLimit(a, b, now) : (a ?? b)
+    if (limit === undefined) return []
+    const end = endOf(limit)
+    return [{ ...limit, resetsAt: end === null ? limit.resetsAt : new Date(Math.round(end / 60_000) * 60_000).toISOString() }]
+  })
+
 /** The rows of a `/context` breakdown that take room in the window: deferred tool schemas do not. */
 export const contextPartsOf = (breakdown: SessionContextBreakdown | undefined): ContextPart[] | null =>
   breakdown === undefined

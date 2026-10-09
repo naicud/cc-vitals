@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ProcessRunResult, Register, SessionUsage } from 'claude-code'
 
-import type { AgentStat, ContextPart, LiveTool, RunStatus, ShellStat, Snapshot, Tokens, View } from '../types'
+import type { AgentStat, ContextPart, Limit, LiveTool, RunStatus, ShellStat, Snapshot, Tokens, View } from '../types'
 import { drawAll, drawLevel } from './band'
 import type { BandInput } from './band'
 import {
@@ -17,9 +17,11 @@ import {
   endRun,
   isBusy,
   limitWarnings,
+  mergeLimits,
   mergeRoster,
   metersOf,
   parseNotification,
+  parsePlanUsage,
   placeOf,
   startLive,
 } from './collect'
@@ -44,14 +46,24 @@ const live = atom({ plugin: 'vitals', key: 'live' } as const, [])
 const tools = atom({ plugin: 'vitals', key: 'tools' } as const, null)
 const history = atom({ plugin: 'vitals', key: 'history' } as const, null)
 const historyProblem = atom({ plugin: 'vitals', key: 'historyProblem' } as const, null)
+const plan = atom({ plugin: 'vitals', key: 'plan' } as const, null)
 
 // What each kind of work costs decides how often it runs: a measurement is free and drawn at
 // once; git is two processes; the /context estimate walks the context; ccusage reads every
-// transcript on the machine.
+// transcript on the machine; the account's usage endpoint is one request, read sparingly.
 const REFRESH_MS = 60_000
 const GIT_EVERY_MS = 20_000
 const BREAKDOWN_EVERY_MS = 5 * 60_000
 const HISTORY_EVERY_MS = 15 * 60_000
+const PLAN_EVERY_MS = 5 * 60_000
+const PLAN_GAP_MS = 60_000
+const PLAN_TIMEOUT_MS = 30_000
+const PLAN_PAUSE_MS = 5 * 60_000
+const PLAN_PAUSE_MAX_MS = 60 * 60_000
+// The plan limits as claude.ai's usage page reads them, every session and surface of the account
+// counted: the session's own Claude login, through the host. It reads usage, it spends none.
+const PLAN_URL = 'https://api.anthropic.com/api/oauth/usage'
+const OAUTH_BETA = 'oauth-2025-04-20'
 const TICK_MS = 1000
 const MAX_BAND_ROWS = 40
 const PANE_ID = 'vitals'
@@ -73,6 +85,9 @@ let contextParts: ContextPart[] | null = null
 // The plan limits' recent readings, for the pace of the forecast.
 const limitSamples = new Map<string, Sample[]>()
 let isReadingHistory = false
+let planAt = 0
+let planPausedUntil = 0
+let planReadingSince: number | null = null
 
 // Each command is written out in full at its call; this only reads the result.
 async function output(run: Promise<ProcessRunResult>) {
@@ -96,14 +111,66 @@ async function setShells($: EngineInterface, fn: (list: ShellStat[]) => ShellSta
   if (JSON.stringify(next) !== JSON.stringify(was)) await update($, shells, () => next)
 }
 
-/** Draws a measurement into the meters at once: no call, the figures came with the event. */
-async function applyMeasure($: EngineInterface, measured: Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>, now: number) {
+/** A measurement's meters, its plan limits joined with the usage endpoint's last reading. */
+async function metersNow($: EngineInterface, measured: Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>, now: number) {
   const meters = metersOf(measured, compaction.compactWindow)
-  for (const l of meters.limits) limitSamples.set(l.kind, addSample(limitSamples.get(l.kind) ?? [], { at: now, percent: l.percent }))
-  await update($, snapshot, s => (s === null ? s : { ...s, ...meters, autoCompactAt: compaction.autoCompactAt, contextParts, at: now }))
-  const warnings = limitWarnings(meters.limits, await read($, warned), now)
+  return { ...meters, limits: mergeLimits(meters.limits, (await read($, plan))?.limits ?? [], now) }
+}
+
+/** The plan limits on show: a sample for each forecast, a toast for each threshold crossed. */
+async function noteLimits($: EngineInterface, limits: Limit[], now: number) {
+  for (const l of limits) limitSamples.set(l.kind, addSample(limitSamples.get(l.kind) ?? [], { at: now, percent: l.percent }))
+  const warnings = limitWarnings(limits, await read($, warned), now)
   for (const w of warnings) $.ui.toast(w.text, { timeoutMs: 8000 })
   if (warnings.length > 0) await update($, warned, s => [...s, ...warnings.map(w => w.key)].slice(-50))
+}
+
+/** Draws a measurement into the meters at once: no call, the figures came with the event. */
+async function applyMeasure($: EngineInterface, measured: Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>, now: number) {
+  const meters = await metersNow($, measured, now)
+  await update($, snapshot, s => (s === null ? s : { ...s, ...meters, autoCompactAt: compaction.autoCompactAt, contextParts, at: now }))
+  await noteLimits($, meters.limits, now)
+}
+
+/** How long a refusal (401, 403, 429) holds the usage endpoint off: its Retry-After, else 5 minutes. */
+const pauseOf = (retryAfter: string | undefined, now: number) => {
+  const seconds = Number(retryAfter)
+  const until = retryAfter === undefined || retryAfter.trim() === '' ? NaN : Number.isFinite(seconds) ? now + seconds * 1000 : Date.parse(retryAfter)
+  return Math.min(Number.isFinite(until) && until > now ? until - now : PLAN_PAUSE_MS, PLAN_PAUSE_MAX_MS)
+}
+
+/**
+ * The plan limits from the account's usage endpoint, at most once a minute and never while it
+ * holds Vitals off. With no Claude login (an API key, a cloud provider) nothing is asked, and a
+ * failed read changes nothing: the last API response's figures stay.
+ */
+async function refreshPlan($: EngineInterface) {
+  const now = await $.clock.now()
+  const isReading = planReadingSince !== null && now - planReadingSince < PLAN_TIMEOUT_MS
+  if (isReading || now < planPausedUntil || now - planAt < PLAN_GAP_MS) return
+  planAt = now
+  planReadingSince = now
+  try {
+    const auth = await $.session.authorize()
+    if (auth === null || auth.kind !== 'bearer') return
+    const answer = await $.http.fetch(PLAN_URL, { auth: auth.handle, headers: { 'anthropic-beta': OAUTH_BETA } })
+    if (answer.status === 401 || answer.status === 403 || answer.status === 429) {
+      planPausedUntil = now + pauseOf(answer.headers['retry-after'], now)
+      return
+    }
+    const limits = answer.ok ? parsePlanUsage(answer.text) : null
+    if (limits === null) return
+    // A read that hung past its timeout may land after a later one: the later stays.
+    const held = await read($, plan)
+    if (held !== null && held.at > now) return
+    await update($, plan, () => ({ at: now, limits }))
+    const snap = await update($, snapshot, s => (s === null ? s : { ...s, limits: mergeLimits(s.limits, limits, now) }))
+    if (snap !== null) await noteLimits($, snap.limits, now)
+  } catch {
+    // Offline, nonessential traffic turned off, or a policy refused it: the figures on show stay.
+  } finally {
+    if (planReadingSince === now) planReadingSince = null
+  }
 }
 
 /** The whole snapshot: the cheap reads every time, git and the /context estimate when due. */
@@ -140,7 +207,7 @@ async function refresh($: EngineInterface) {
     prompts,
     model,
     ...gitPlace,
-    ...metersOf(usage, compaction.compactWindow),
+    ...(await metersNow($, usage, now)),
     autoCompactAt: compaction.autoCompactAt,
     contextParts,
   }
@@ -311,8 +378,10 @@ export const register: Register = (on, options) => {
     await update($, view, () => asLevel(saved))
     await restoreHistory($)
     await refresh($)
+    void refreshPlan($)
     void refreshHistory($, false)
     $.clock.every(REFRESH_MS, () => void refresh($))
+    $.clock.every(PLAN_EVERY_MS, () => void refreshPlan($))
     $.clock.every(HISTORY_EVERY_MS, () => void refreshHistory($, false))
     $.clock.every(TICK_MS, () => void tick($))
 
@@ -340,6 +409,7 @@ export const register: Register = (on, options) => {
   on('session.attach', async ($, e, next) => {
     const attached = await next(e)
     await refresh($)
+    void refreshPlan($)
 
     return attached
   })
@@ -362,7 +432,10 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     const completed = await next(e)
     await noteTurn($, e.agentId, e.durationMs, e.usage?.model ?? null, e.usage ? toTokens(e.usage) : null)
-    if (!e.agentId) await refresh($)
+    if (!e.agentId) {
+      await refresh($)
+      void refreshPlan($)
+    }
 
     return completed
   })

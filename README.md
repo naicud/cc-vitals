@@ -50,7 +50,7 @@ The level you pick stays for the sessions that follow.
 | Section | Contents |
 | :-- | :-- |
 | Header | 🧠 model, ⚡ the reasoning effort the last request used (pips out of five), 📁 folder, 🌿 branch (🌳 in a worktree), ahead/behind, changed files, ⏳ session age, prompts, 💸 cost, 🔥 burn rate per hour |
-| Meters | ⛽ CTX, the context window (against the auto-compact window when one is set, as `/context` does); 🗜 COMPACT, the context against the auto-compact threshold, tokens left and compactions so far; ⏳ 5H LIMIT and 📅 WEEKLY plan limits with reset countdowns. Bars at an eighth of a cell, two to a row when the terminal is narrow |
+| Meters | ⛽ CTX, the context window (against the auto-compact window when one is set, as `/context` does); 🗜 COMPACT, the context against the auto-compact threshold, tokens left and compactions so far; ⏳ 5H LIMIT and 📅 WEEKLY plan limits with reset countdowns, as claude.ai's usage page counts them: every session, machine and claude.ai chat on the account, not only this session. Bars at an eighth of a cell, two to a row when the terminal is narrow |
 | 🔮 Forecast | Each plan limit at the pace you spend it: the last hour's pace once there are ten minutes of it, else the window's average. Either when it runs out before its reset (⚠), or where it will stand at the reset (✓) |
 | 🧩 Context | What fills the context, as `/context` breaks it down: one bar in its colours (system prompt, tools, memory, skills, messages, ░ free, ▒ autocompact buffer) and a legend with tokens and shares. An estimate, read every 5 minutes |
 | 🔥 Tokens | Last main turn and whole session (subagents included): in, out, cache read, cache write, hit rate, total; idle time, 🧊 cache warm with the time until it expires, or 🥶 cold past the prompt-cache TTL. An interrupted turn keeps the last counted one on show |
@@ -68,6 +68,7 @@ Meters turn amber at 80% and red at 95%; a cache hit rate under 50% and a cold c
 | Work | How often |
 | :-- | :-- |
 | Context, plan limits, cost | As Claude Code measures them: the figures come with the event, no call is made |
+| Plan limits across the account (`/api/oauth/usage`, the endpoint `/usage` reads) | Every 5 minutes and after a turn, at most once a minute; held off as long as the endpoint asks after a refusal. A read of usage, not a model request: it spends no tokens and no plan usage |
 | Model, effort, tokens, tools, agents, shells | From the events that already happen (each request, turn, tool call, notification) |
 | `git status` and `rev-parse` | At most every 20 seconds |
 | The `/context` estimate (auto-compact threshold, context breakdown) | Every 5 minutes and after a compaction |
@@ -135,6 +136,7 @@ To update by hand (without auto-update): `claude plugin marketplace update naicu
 | Usage costs look too low | ccusage could not reach its price list and priced new models at zero: run `ccusage claude daily` once online |
 | One line per section instead of tables | The band has few rows (a short terminal, or Claude's progress is taking them): make the terminal taller, or `/vitals pane` for everything in full |
 | No band at all | Claude Code older than v2.1.287, or the plugin disabled (`claude plugin list`, then `claude plugin enable vitals@naicud`) |
+| ⏳ 5H LIMIT or 📅 WEEKLY a point behind claude.ai | The account's usage is read every 5 minutes and after each turn: usage elsewhere shows within 5 minutes. Signed in with an API key, Bedrock or Vertex there is no account usage to read, and the limits are the ones this session's last response reported |
 | Less than you expect | `/vitals-low` or `/vitals-medium` is on, and the level stays across sessions: `/vitals-high` brings everything back |
 
 ## Settings
@@ -145,7 +147,7 @@ One option, `cache_ttl`: how long the main conversation's prompt cache lives, `1
 
 - **Runs** `git`, two fixed read-only commands in the session's folder with a 5-second timeout: `git status --porcelain=v2 --branch` and `git rev-parse --git-dir --git-common-dir`; neither contacts a remote. And `ccusage claude daily --json --since <first of last month>` for the usage section, when [ccusage](https://github.com/ccusage/ccusage) is installed (`npm i -g ccusage`): it reads Claude Code's local transcripts and may fetch model prices; without it the usage section says so and everything else works.
 - **Reads** through the mods API: session usage (context, cost, plan limits), folder, model, prompt count, the agent roster, each model request's model and effort, each finished turn's duration and token counts, each tool call's name (and, for Bash, the command and its description; for Agent, the agent id), the ids and statuses in task notifications, and the effort row of `/config` until the first request reports one. It never reads response text, files, environment variables or credentials.
-- **Sends** nothing itself and writes no files. Session state lives in `$.state`; the last ccusage report is kept in the plugin's `$.store`.
+- **Sends** one request of its own, a `GET https://api.anthropic.com/api/oauth/usage` for the plan limits, through Claude Code with the session's own Claude login: the plugin holds an opaque handle, never the token. Not sent with an API key or a cloud provider, nor while `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set. It writes no files. Session state lives in `$.state`; the last ccusage report is kept in the plugin's `$.store`.
 - **Changes** nothing: every hook passes the event through unchanged.
 
 ## Develop

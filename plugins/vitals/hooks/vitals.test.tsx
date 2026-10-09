@@ -1,8 +1,8 @@
 import type { On } from 'claude-code'
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { mergeRoster, parseNotification } from './collect'
+import { mergeLimits, mergeRoster, parseNotification, parsePlanUsage } from './collect'
 import { count, hitRate, isShown, prettyModel } from './format'
 import { forecast } from './forecast'
 import { historySince, parseDaily, periods, weekStart } from './report'
@@ -63,10 +63,42 @@ const CCUSAGE = JSON.stringify({
   ],
 })
 
+const FIVE_HOUR_END = new Date(NOW + 2 * 3_600_000).toISOString()
+const WEEK_END = new Date(NOW + 3 * 86_400_000).toISOString()
+
+/** A reset time as the usage endpoint spells it: microseconds and an offset. */
+const endpointTime = (iso: string, ms = 314) => iso.replace('.000Z', `.${ms}096+00:00`)
+
+/** The usage endpoint's answer, the shape it has: both windows and fields Vitals does not read. */
+const planAnswer = (fiveHour: number, weekly: number, weekEnd = endpointTime(WEEK_END)) =>
+  JSON.stringify({
+    five_hour: { utilization: fiveHour, resets_at: endpointTime(FIVE_HOUR_END), limit_dollars: null },
+    seven_day: { utilization: weekly, resets_at: weekEnd, limit_dollars: null },
+    seven_day_opus: null,
+    limits: [{ kind: 'session', group: 'session', percent: fiveHour }],
+  })
+
+/** The session's login and what the usage endpoint answers it; each request is noted. */
+type Account = {
+  kind: 'bearer' | 'api-key'
+  answer: { status: number; headers?: Record<string, string>; text: string }
+  asked: { url: string; auth?: string; beta?: string }[]
+}
+
+const account = (text: string, kind: Account['kind'] = 'bearer'): Account => ({ kind, answer: { status: 200, text }, asked: [] })
+
 // What the engine answers beneath the mod: a session on main with two changed files, 680k of a
 // 1M window auto-compacting at 900k, both plan limits, $4.21 spent, effort high in /config, one
-// running subagent and ccusage's daily report.
-const fakeEngine = (on: On, toasts: string[] = [], stored: unknown[] = [], clock = { now: NOW }, roster: readonly unknown[] = ROSTER) => {
+// running subagent and ccusage's daily report. With no account, no Claude login: no handle; with
+// no clock, the test's own mock.clock answers the time.
+const fakeEngine = (
+  on: On,
+  toasts: string[] = [],
+  stored: unknown[] = [],
+  clock: { now: number } | null = { now: NOW },
+  roster: readonly unknown[] = ROSTER,
+  login: Account | null = null,
+) => {
   on('ui.toast', ($, e) => {
     toasts.push(e.text)
     return { value: undefined }
@@ -103,19 +135,27 @@ const fakeEngine = (on: On, toasts: string[] = [], stored: unknown[] = [], clock
             }),
       },
       rateLimits: [
-        { kind: 'five_hour', percentUsed: 42, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() },
-        { kind: 'seven_day', percentUsed: 85, resetsAt: new Date(NOW + 3 * 86_400_000).toISOString() },
+        { kind: 'five_hour', percentUsed: 42, resetsAt: FIVE_HOUR_END },
+        { kind: 'seven_day', percentUsed: 85, resetsAt: WEEK_END },
       ],
       cost: { usd: 4.21 },
     },
   }))
+  on('session.authorize', () => ({ value: login === null ? null : { handle: 'handle-1', kind: login.kind } }))
+  on('http.fetch', ($, e) => {
+    login?.asked.push({ url: e.url, auth: e.init?.auth, beta: e.init?.headers?.['anthropic-beta'] })
+    const { status, headers = {}, text } = login?.answer ?? { status: 500, text: '' }
+    return { value: { status, ok: status >= 200 && status < 300, headers, text } }
+  })
   on('session.cwd', () => ({ value: '/work/cc-vitals' }))
   on('session.turns', () => ({ value: 12 }))
   on('session.model', () => ({ value: 'claude-opus-5-5[1m]' }))
   on('agent.list', () => ({ value: roster as typeof ROSTER }))
-  on('clock.now', () => ({ value: clock.now }))
-  on('clock.every', () => ({ value: undefined }))
-  on('clock.after', () => ({ value: undefined }))
+  if (clock !== null) {
+    on('clock.now', () => ({ value: clock.now }))
+    on('clock.every', () => ({ value: undefined }))
+    on('clock.after', () => ({ value: undefined }))
+  }
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('config.list', () => ({
     value: [{ key: 'effort', label: 'Effort', kind: 'choice' as const, value: 'high', provider: { plugin: 'core', tier: 'core' as const }, isLocked: false }],
@@ -126,6 +166,7 @@ const fakeEngine = (on: On, toasts: string[] = [], stored: unknown[] = [], clock
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.measure', ($, e) => ({ changed: e.changed }))
   on('turn.complete', ($, e) => ({ text: e.answer, usage: e.usage }))
   on('turn.step', async function* ($, e) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage: null }
@@ -440,4 +481,109 @@ test('a plan limit past 80% raises one toast', async ($, on) => {
   await runSession($)
 
   expect(toasts).toEqual(['Weekly usage limit at 85% · resets in 3d 0h'])
+})
+
+test('the usage endpoint answers both plan windows, a nulled one left out', () => {
+  expect(parsePlanUsage(planAnswer(7, 33.333))).toEqual([
+    { kind: 'five_hour', percent: 7, resetsAt: new Date(NOW + 2 * 3_600_000 + 314).toISOString() },
+    { kind: 'seven_day', percent: 33.3, resetsAt: new Date(NOW + 3 * 86_400_000 + 314).toISOString() },
+  ])
+  expect(parsePlanUsage(JSON.stringify({ five_hour: { utilization: 7, resets_at: null }, seven_day: null }))).toEqual([
+    { kind: 'five_hour', percent: 7, resetsAt: null },
+  ])
+  expect(parsePlanUsage(JSON.stringify({ five_hour: { utilization: '7' } }))).toEqual([])
+  expect(parsePlanUsage('<html>')).toBeNull()
+  expect(parsePlanUsage('null')).toBeNull()
+})
+
+test('two readings of a window: the higher of the same window, the later window, the one not ended', () => {
+  const at = (ms: number) => new Date(NOW + ms).toISOString()
+  const week = (percent: number, end: string | null) => ({ kind: 'seven_day', percent, resetsAt: end })
+  // One window, its end spelled a fraction of a second apart: the higher, the end to the minute.
+  expect(mergeLimits([week(85, at(86_400_000))], [week(87, at(86_400_000 + 314))], NOW)).toEqual([week(87, at(86_400_000))])
+  expect(mergeLimits([week(88.5, at(86_400_000))], [week(87, at(86_400_000 + 314))], NOW)).toEqual([week(88.5, at(86_400_000))])
+  // A new window after a reset starts low: the later window wins.
+  expect(mergeLimits([week(95, at(-60_000))], [week(2, at(7 * 86_400_000))], NOW)).toEqual([week(2, at(7 * 86_400_000))])
+  expect(mergeLimits([week(2, at(7 * 86_400_000))], [week(95, at(86_400_000))], NOW)).toEqual([week(2, at(7 * 86_400_000))])
+  // A known end over an unknown one; a kind only one source has stays.
+  expect(mergeLimits([week(40, null)], [week(30, at(86_400_000))], NOW)).toEqual([week(30, at(86_400_000))])
+  const spend = { kind: 'spend_limit', percent: 12, resetsAt: null }
+  expect(mergeLimits([spend], [week(30, at(86_400_000))], NOW)).toEqual([spend, week(30, at(86_400_000))])
+})
+
+const MAIN_TURN = { answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't9', usage: MAIN_USAGE, reason: 'answer' as const }
+
+test('the usage endpoint raises the meters past the last response, through the login, one toast a threshold', async ($, on) => {
+  const toasts: string[] = []
+  const login = account(planAnswer(40, 87))
+  const clock = mock.clock(on, { now: NOW })
+  fakeEngine(on, toasts, [], null, ROSTER, login)
+  await runSession($)
+  await clock.settle()
+
+  const band = await bandText($, 'terminal')
+  expect(band).toContain('87%')
+  expect(band).toContain('42%')
+  expect(band).not.toContain('85%')
+  expect(login.asked).toEqual([{ url: 'https://api.anthropic.com/api/oauth/usage', auth: 'handle-1', beta: 'oauth-2025-04-20' }])
+  expect(toasts).toEqual(['Weekly usage limit at 85% · resets in 3d 0h'])
+})
+
+test('a later API response does not step the meter back within the window', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  fakeEngine(on, [], [], null, ROSTER, account(planAnswer(40, 87)))
+  await runSession($)
+  await clock.settle()
+  await $.session.measure({
+    context: { tokens: 680_000, window: 1_000_000, percent: 68 },
+    rateLimits: [
+      { kind: 'five_hour', percentUsed: 43, resetsAt: FIVE_HOUR_END },
+      { kind: 'seven_day', percentUsed: 85, resetsAt: WEEK_END },
+    ],
+    cost: { usd: 4.3 },
+    changed: ['rateLimits', 'cost'],
+  })
+
+  const band = await bandText($, 'terminal')
+  expect(band).toContain('$4.30')
+  expect(band).toContain('87%')
+  expect(band).toContain('43%')
+})
+
+test('the usage endpoint is read every 5 minutes, at most once a minute, and a refusal holds it off', async ($, on) => {
+  const login: Account = { kind: 'bearer', answer: { status: 429, headers: { 'retry-after': '420' }, text: '' }, asked: [] }
+  const clock = mock.clock(on, { now: NOW })
+  fakeEngine(on, [], [], null, ROSTER, login)
+  await runSession($)
+  await clock.settle()
+  expect(login.asked.length).toBe(1)
+
+  // Held off for 7 minutes: the 5-minute read is skipped, the 10-minute one asks.
+  login.answer = { status: 200, text: planAnswer(40, 87) }
+  await clock.advance(5 * 60_000)
+  expect(login.asked.length).toBe(1)
+  await clock.advance(5 * 60_000)
+  expect(login.asked.length).toBe(2)
+  expect(await bandText($, 'terminal')).toContain('87%')
+
+  // A turn 30 seconds after a read does not ask; one a minute after it does.
+  await clock.advance(30_000)
+  await $.turn.complete(MAIN_TURN)
+  await clock.settle()
+  expect(login.asked.length).toBe(2)
+  await clock.advance(31_000)
+  await $.turn.complete(MAIN_TURN)
+  await clock.settle()
+  expect(login.asked.length).toBe(3)
+})
+
+test('with no Claude login the usage endpoint is not asked and the last response stands', async ($, on) => {
+  const login = account(planAnswer(40, 87), 'api-key')
+  const clock = mock.clock(on, { now: NOW })
+  fakeEngine(on, [], [], null, ROSTER, login)
+  await runSession($)
+  await clock.advance(5 * 60_000)
+
+  expect(login.asked).toEqual([])
+  expect(await bandText($, 'terminal')).toContain('85%')
 })

@@ -103,6 +103,9 @@ export type UsageHistory = { at: number; days: DayUsage[] }
 /** Why the history could not be read this time; the last good one stays drawn. */
 export type HistoryProblem = { at: number; reason: string }
 
+/** The plan limits as the account's usage endpoint last reported them, and when. */
+export type PlanUsage = { at: number; limits: Limit[] }
+
 declare module 'claude-code' {
   interface PluginState {
     vitals: {
@@ -119,6 +122,7 @@ declare module 'claude-code' {
       tools: ToolCounts | null
       history: UsageHistory | null
       historyProblem: HistoryProblem | null
+      plan: PlanUsage | null
     }
   }
 }
