@@ -1,5 +1,5 @@
-import type { HistoryProblem, UsageHistory } from '../types'
-import { ago, count, delta, money, prettyModel } from './format'
+import type { HistoryProblem, PlanUsage, UsageHistory } from '../types'
+import { ago, cash, count, delta, limitLabel, meterTone, money, prettyModel, until } from './format'
 import { REPORT_WEEKS, addDays, change, firstDate, localDate, modelShares, monthSpans, periods, weekSpans } from './report'
 import { ACCENT, blocks, rule, table } from './ui'
 import type { Canvas, Cell, Column } from './ui'
@@ -45,7 +45,89 @@ const MODEL_COLUMNS: Column[] = [
   { title: 'BAR', width: 10, grow: true },
 ]
 
-/** The usage report: the last 14 days, the last 6 weeks, this month and the last, and the models. */
+const PLAN_COLUMNS: Column[] = [
+  { title: 'LIMIT', width: 22 },
+  { title: 'USED', width: 6, align: 'right' },
+  { title: 'RESETS', width: 7, align: 'right' },
+  { title: 'NOTE', width: 22, priority: 1 },
+  { title: 'BAR', width: 10, grow: true },
+]
+
+const SHARE_COLUMNS: Column[] = [
+  { title: 'PRODUCT', width: 22 },
+  { title: 'SHARE', width: 6, align: 'right' },
+  { title: 'BAR', width: 10, grow: true },
+]
+
+/** A limit's bar against 100%, in the tone its meter in the band has. */
+const limitBar = (percent: number, severity: string | undefined, cells: number): Cell => ({
+  text: blocks(percent, cells).filled,
+  color: meterTone(percent, severity) ?? ACCENT,
+})
+
+/**
+ * The account's plan limits as its usage endpoint reports them, every session, machine and claude.ai
+ * chat counted: the 5-hour and weekly windows, each model's own weekly limit, usage credits, and the
+ * weekly limit's shares by product. `▸` marks the limit the server names as the one that counts now.
+ */
+const drawPlan = (canvas: Canvas, inner: number, now: number, plan: PlanUsage) => {
+  const { Box, Text } = canvas.els
+  const barCells = Math.max(6, inner - 22 - 6 - 7 - 22 - 3 * 4)
+  const resets = (iso: string | null): Cell => (iso === null ? { text: '—', dim: true } : { text: until(iso, now), dim: true })
+  const graded = (severity: string | undefined, isActive: boolean) =>
+    [isActive ? 'counts now' : '', severity !== undefined && severity !== 'normal' ? severity : ''].filter(t => t !== '').join(' · ')
+  const limitRows = plan.limits.map((l): Record<string, Cell> => ({
+    LIMIT: { text: `${l.isActive === true ? '▸ ' : ''}${limitLabel(l.kind)}${l.kind === 'seven_day' ? ' · all models' : ''}`, bold: true },
+    USED: { text: `${l.percent}%`, bold: true, color: meterTone(l.percent, l.severity) },
+    RESETS: resets(l.resetsAt),
+    NOTE: { text: graded(l.severity, l.isActive === true), color: meterTone(l.percent, l.severity) },
+    BAR: limitBar(l.percent, l.severity, barCells),
+  }))
+  const otherRows = plan.rows.map((r): Record<string, Cell> => ({
+    LIMIT: { text: `${r.isActive ? '▸ ' : ''}${r.kind.startsWith('weekly') ? 'Weekly · ' : ''}${r.label}`, bold: true },
+    USED: { text: `${r.percent}%`, bold: true, color: meterTone(r.percent, r.severity) },
+    RESETS: resets(r.resetsAt),
+    NOTE: { text: [r.ofWeekly === null ? '' : `up to ${r.ofWeekly}% of weekly`, graded(r.severity, r.isActive)].filter(t => t !== '').join(' · '), dim: true },
+    BAR: limitBar(r.percent, r.severity, barCells),
+  }))
+  const c = plan.credits
+  const creditRows: Record<string, Cell>[] =
+    c === null
+      ? []
+      : [
+          {
+            LIMIT: { text: 'Usage credits', bold: true },
+            USED: c.limit === null || c.limit <= 0 ? { text: '—', dim: true } : { text: `${Math.round((c.used / c.limit) * 100)}%`, bold: true },
+            RESETS: { text: 'monthly', dim: true },
+            NOTE: { text: `${cash(c.used, c.currency)}${c.limit === null ? ' · no cap' : ` of ${cash(c.limit, c.currency)}`}${c.isOn ? '' : ' · off'}`, dim: true },
+            BAR: c.limit === null || c.limit <= 0 ? { text: '' } : limitBar((c.used / c.limit) * 100, undefined, barCells),
+          },
+        ]
+  const b = plan.breakdown
+  const shareCells = Math.max(6, inner - 22 - 6 - 3 * 2)
+  const shareRows = (b?.rows ?? []).map((r): Record<string, Cell> => ({
+    PRODUCT: { text: r.name, bold: r.percent > 0, dim: r.percent === 0 },
+    SHARE: { text: `${r.percent}%`, dim: r.percent === 0 },
+    BAR: { text: blocks(r.percent, shareCells).filled, color: ACCENT },
+  }))
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={ACCENT} paddingX={1}>
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text bold color={ACCENT}>{'🎯 PLAN LIMITS  ·  your account, every session and claude.ai'}</Text>
+        <Text dimColor>{`/api/oauth/usage · ${ago(now - plan.at)} ago`}</Text>
+      </Box>
+      {table(canvas.els, PLAN_COLUMNS, [...limitRows, ...otherRows, ...creditRows], inner)}
+      {b !== null && rule(canvas.els, '🧭 THIS WEEK BY PRODUCT', `share of the weekly limit${b.asOf === null ? '' : ` · as of ${ago(now - Date.parse(b.asOf))} ago`}`, inner)}
+      {b !== null && table(canvas.els, SHARE_COLUMNS, shareRows, inner)}
+    </Box>
+  )
+}
+
+/**
+ * The usage report: the account's plan limits when there is a reading of them, then this machine's
+ * Claude Code spend from ccusage: the last 14 days, the last 6 weeks, this month and the last, and
+ * the models.
+ */
 export const drawReport = (
   canvas: Canvas,
   room: number,
@@ -53,11 +135,18 @@ export const drawReport = (
   history: UsageHistory | null,
   problem: HistoryProblem | null,
   isReading: boolean,
+  plan: PlanUsage | null = null,
 ) => {
   const { Box, Text } = canvas.els
   const inner = room - FRAME_CELLS
+  const planBox = plan === null ? null : drawPlan(canvas, inner, now, plan)
   if (history === null) {
-    return <Text dimColor>{problem === null ? 'Reading usage history…' : `No usage history: ${problem.reason}`}</Text>
+    return (
+      <Box flexDirection="column">
+        {planBox}
+        <Text dimColor>{problem === null ? 'Reading usage history…' : `No usage history: ${problem.reason}`}</Text>
+      </Box>
+    )
   }
   const today = localDate(now)
   // Days before the history's first one have no data at all: not zero spent, nothing known.
@@ -119,21 +208,24 @@ export const drawReport = (
     BAR: barCell(m.costUsd, models[0]?.costUsd ?? 0, barCells),
   }))
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={ACCENT} paddingX={1}>
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text bold color={ACCENT}>{'📊 USAGE REPORT  ·  Claude Code on this machine'}</Text>
-        <Text dimColor>
-          {`ccusage · data from ${first.slice(5)} · ${isReading ? 'reading…' : `${ago(now - history.at)} ago`}${problem !== null && problem.at > history.at ? ' · ⚠ stale' : ''}`}
-        </Text>
+    <Box flexDirection="column">
+      {planBox}
+      <Box flexDirection="column" borderStyle="round" borderColor={ACCENT} paddingX={1}>
+        <Box flexDirection="row" justifyContent="space-between">
+          <Text bold color={ACCENT}>{'📊 USAGE REPORT  ·  Claude Code on this machine'}</Text>
+          <Text dimColor>
+            {`ccusage · data from ${first.slice(5)} · ${isReading ? 'reading…' : `${ago(now - history.at)} ago`}${problem !== null && problem.at > history.at ? ' · ⚠ stale' : ''}`}
+          </Text>
+        </Box>
+        {rule(canvas.els, '📅 LAST 14 DAYS', '', inner)}
+        {table(canvas.els, DAY_COLUMNS, dayRows, inner)}
+        {rule(canvas.els, '🗓  WEEKS', 'Monday to Sunday · this week against the same days last week', inner)}
+        {table(canvas.els, PERIOD_COLUMNS, weekRows, inner)}
+        {rule(canvas.els, '🌙 MONTHS', 'this month against the same days last month', inner)}
+        {table(canvas.els, PERIOD_COLUMNS, monthRows, inner)}
+        {rule(canvas.els, '🧠 MODELS THIS MONTH', '', inner)}
+        {table(canvas.els, MODEL_COLUMNS, modelRows, inner)}
       </Box>
-      {rule(canvas.els, '📅 LAST 14 DAYS', '', inner)}
-      {table(canvas.els, DAY_COLUMNS, dayRows, inner)}
-      {rule(canvas.els, '🗓  WEEKS', 'Monday to Sunday · this week against the same days last week', inner)}
-      {table(canvas.els, PERIOD_COLUMNS, weekRows, inner)}
-      {rule(canvas.els, '🌙 MONTHS', 'this month against the same days last month', inner)}
-      {table(canvas.els, PERIOD_COLUMNS, monthRows, inner)}
-      {rule(canvas.els, '🧠 MODELS THIS MONTH', '', inner)}
-      {table(canvas.els, MODEL_COLUMNS, modelRows, inner)}
     </Box>
   )
 }

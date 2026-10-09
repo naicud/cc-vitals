@@ -41,6 +41,15 @@ export const toolName = (tool: string) => (tool.startsWith('mcp__') ? (tool.spli
 
 export const tone = (percent: number) => (percent >= 95 ? 'error' : percent >= 80 ? 'warning' : undefined)
 
+/** The server's grade of a usage row as a tone: `critical` red, `warning` amber, else none. */
+export const gradeTone = (severity: string | undefined) => (severity === 'critical' ? 'error' : severity === 'warning' ? 'warning' : undefined)
+
+/** A meter's tone: the graver of its own thresholds and the server's grade, which may know more. */
+export const meterTone = (percent: number, severity?: string) => {
+  const [own, server] = [tone(percent), gradeTone(severity)]
+  return own === 'error' || server === 'error' ? 'error' : own ?? server
+}
+
 const LABELS: Record<string, string> = { five_hour: '5-hour', seven_day: 'Weekly' }
 const SHORT_LABELS: Record<string, string> = { five_hour: '5H', seven_day: '7D' }
 
@@ -120,6 +129,9 @@ export const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
 /** Dollars as a glance reads them: `$9.23`, `$118`, `$4.4k`. */
 export const money = (usd: number) =>
   usd >= 1000 ? `$${+(usd / 1000).toFixed(1)}k` : usd >= 100 ? `$${Math.round(usd)}` : `$${usd.toFixed(2)}`
+
+/** An amount in its currency: dollars as `money` writes them, any other with its code (`12.50 EUR`). */
+export const cash = (amount: number, currency: string) => (currency === 'USD' ? money(amount) : `${amount.toFixed(2)} ${currency}`)
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 

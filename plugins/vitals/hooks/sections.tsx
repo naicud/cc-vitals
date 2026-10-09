@@ -1,6 +1,6 @@
 import type { RenderChildren } from 'claude-code'
 
-import type { AgentStat, Compactions, ContextPart, HistoryProblem, LiveTool, ShellStat, Snapshot, ToolCounts, Totals, TurnStat, UsageHistory } from '../types'
+import type { AgentStat, Compactions, ContextPart, HistoryProblem, LiveTool, PlanUsage, ShellStat, Snapshot, ToolCounts, Totals, TurnStat, UsageHistory } from '../types'
 import {
   NO_TOKENS,
   addTokens,
@@ -44,6 +44,8 @@ export type BandInput = {
   tools: ToolCounts | null
   history: UsageHistory | null
   historyProblem: HistoryProblem | null
+  /** The account's usage as its usage endpoint last reported it; null with no Claude login. */
+  plan: PlanUsage | null
   forecasts: Forecast[]
   cacheTtlMs: number
 }

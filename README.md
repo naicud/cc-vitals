@@ -2,11 +2,11 @@
 
 **A Claude Code mod that puts your session's vitals in a framed live dashboard above the prompt — in the terminal and in the desktop app's Code tab. Light by design: it draws what Claude Code already hands it and runs anything slow rarely, in the background.**
 
-Model and reasoning effort, context and plan limits, cost and burn rate, tokens and cache per turn and session, auto-compaction, every subagent with its own model and effort, background shells, the tool running right now, and your weekly and monthly spend.
+Model and reasoning effort, context and plan limits (account-wide, as claude.ai counts them), cost and burn rate, tokens and cache per turn and session, auto-compaction, every subagent with its own model and effort, background shells, the tool running right now, and your weekly and monthly spend.
 
 ![vitals-high: the vitals box on top; tokens, context and usage on the left; agents and tools on the right](docs/screenshots/vitals-high.png)
 
-Every part has its own box. ◆ VITALS sits on top across the whole width: the header, four bars, ⛽ CTX (context window), 🗜 COMPACT (how far the context is on its way to auto-compaction), ⏳ 5H LIMIT and 📅 WEEKLY (plan limits), and the 🔮 FORECAST of both limits at your current pace. Under it, on a terminal 150 columns wide or more, two columns: 🔥 TOKENS, 🧩 CONTEXT and 📊 USAGE on the left, 🤖 AGENTS, 🔧 TOOLS and 🐚 SHELLS on the right, agents on top. Narrower, one column: tokens, agents, tools, shells, context, usage.
+Every part has its own box. ◆ VITALS sits on top across the whole width: the header, four bars, ⛽ CTX (context window), 🗜 COMPACT (how far the context is on its way to auto-compaction), ⏳ 5H LIMIT and 📅 WEEKLY (plan limits; a model's own weekly limit and 💳 CREDITS join them when they count), and the 🔮 FORECAST of both limits at your current pace. Under it, on a terminal 150 columns wide or more, two columns: 🔥 TOKENS, 🧩 CONTEXT and 📊 USAGE on the left, 🤖 AGENTS, 🔧 TOOLS and 🐚 SHELLS on the right, agents on top. Narrower, one column: tokens, agents, tools, shells, context, usage.
 
 The band never scrolls (at most 40 rows). Every section gets one line first, then the most important ones grow to their full box while they fit: tokens, agents, tools, context, usage, shells. A short terminal, or one where Claude's progress takes the space, gets one line each instead of losing sections off the bottom.
 
@@ -19,7 +19,7 @@ Commands:
 | `/vitals-low` | The vitals box alone: model, effort, session, cost, the four bars and the forecast |
 | `/vitals` | The next level down: high → medium → low → high |
 | `/vitals pane` | A pane with every section in full: every agent, every shell, every tool |
-| `/vitals report` | The usage report: the last 14 days, the last 6 weeks, this month and the last, and this month's models, each with bars |
+| `/vitals report` | The usage report: 🎯 your account's plan limits (each model's own weekly limit, usage credits, and this week's limit by product: Claude Code, chats, Cowork), then the last 14 days, the last 6 weeks, this month and the last, and this month's models, each with bars |
 
 The level you pick stays for the sessions that follow.
 
@@ -50,16 +50,17 @@ The level you pick stays for the sessions that follow.
 | Section | Contents |
 | :-- | :-- |
 | Header | 🧠 model, ⚡ the reasoning effort the last request used (pips out of five), 📁 folder, 🌿 branch (🌳 in a worktree), ahead/behind, changed files, ⏳ session age, prompts, 💸 cost, 🔥 burn rate per hour |
-| Meters | ⛽ CTX, the context window (against the auto-compact window when one is set, as `/context` does); 🗜 COMPACT, the context against the auto-compact threshold, tokens left and compactions so far; ⏳ 5H LIMIT and 📅 WEEKLY plan limits with reset countdowns, as claude.ai's usage page counts them: every session, machine and claude.ai chat on the account, not only this session. Bars at an eighth of a cell, two to a row when the terminal is narrow |
+| Meters | ⛽ CTX, the context window (against the auto-compact window when one is set, as `/context` does); 🗜 COMPACT, the context against the auto-compact threshold, tokens left and compactions so far; ⏳ 5H LIMIT and 📅 WEEKLY plan limits with reset countdowns, as claude.ai's usage page counts them: every session, machine and claude.ai chat on the account, not only this session; `▸` marks the one the server names as the limit that counts now. A model's own weekly limit (📅 FABLE) once it is used or graded above normal, and 💳 CREDITS, spent against the month's limit, while usage credits are on or spent; `/vitals pane` shows them always. Bars at an eighth of a cell, two to a row when the terminal is narrow |
 | 🔮 Forecast | Each plan limit at the pace you spend it: the last hour's pace once there are ten minutes of it, else the window's average. Either when it runs out before its reset (⚠), or where it will stand at the reset (✓) |
 | 🧩 Context | What fills the context, as `/context` breaks it down: one bar in its colours (system prompt, tools, memory, skills, messages, ░ free, ▒ autocompact buffer) and a legend with tokens and shares. An estimate, read every 5 minutes |
 | 🔥 Tokens | Last main turn and whole session (subagents included): in, out, cache read, cache write, hit rate, total; idle time, 🧊 cache warm with the time until it expires, or 🥶 cold past the prompt-cache TTL. An interrupted turn keeps the last counted one on show |
 | 🤖 Agents | The main loop and every subagent: status (spinner while it runs, ✓ ✗ ■ when it ended), task, type, the model and effort its requests actually used, tokens, hit rate, tool calls, time. The band shows the ones running; one that ends keeps its ✓ or ✗ three seconds, then leaves. `/vitals pane` keeps every one of the session |
 | 🔧 Tools | One row per tool the session called: a spinner while one runs, calls, errors, a bar of its share of the calls, and what runs now (elapsed, how many at once, which agent). MCP tools by their short name |
 | 📊 Usage | Today, this week (Monday first) and this month across every Claude Code session on the machine, each against the same days of the period before, the top models, a 14-day sparkline |
+| 🎯 Plan limits (report) | Your account as claude.ai reports it: the 5-hour and weekly windows, each model's own weekly limit with the share of the weekly it may use, usage credits, and 🧭 who spent this week's limit by product (Claude Code, chats, Cowork, other). Read with your Claude login; absent with an API key or a cloud provider |
 | 🐚 Shells | Background shells: id, command, which agent started it, status, time. Ended by the task notification or a TaskStop; the band shows the running ones and drops an ended one after three seconds, `/vitals pane` keeps them all |
 
-Meters turn amber at 80% and red at 95%; a cache hit rate under 50% and a cold cache are flagged. A toast pops up when a plan limit crosses 80% and again at 95%, once per window. Narrow windows drop the least useful table columns first.
+Meters turn amber at 80% and red at 95%, or sooner when the server grades a plan limit `warning` or `critical`; a cache hit rate under 50% and a cold cache are flagged. A toast pops up when a plan limit crosses 80% and again at 95%, once per window. Narrow windows drop the least useful table columns first.
 
 **Hit rate** is cache read over everything the request sent: `read / (in + read + write)`.
 
@@ -68,7 +69,7 @@ Meters turn amber at 80% and red at 95%; a cache hit rate under 50% and a cold c
 | Work | How often |
 | :-- | :-- |
 | Context, plan limits, cost | As Claude Code measures them: the figures come with the event, no call is made |
-| Plan limits across the account (`/api/oauth/usage`, the endpoint `/usage` reads) | Every 5 minutes and after a turn, at most once a minute; held off as long as the endpoint asks after a refusal. A read of usage, not a model request: it spends no tokens and no plan usage |
+| Plan limits, usage credits and the weekly limit by product, across the account (`/api/oauth/usage`, the endpoint `/usage` reads) | Every 5 minutes and after a turn, at most once a minute; held off as long as the endpoint asks after a refusal. A read of usage, not a model request: it spends no tokens and no plan usage |
 | Model, effort, tokens, tools, agents, shells | From the events that already happen (each request, turn, tool call, notification) |
 | `git status` and `rev-parse` | At most every 20 seconds |
 | The `/context` estimate (auto-compact threshold, context breakdown) | Every 5 minutes and after a compaction |
@@ -147,7 +148,7 @@ One option, `cache_ttl`: how long the main conversation's prompt cache lives, `1
 
 - **Runs** `git`, two fixed read-only commands in the session's folder with a 5-second timeout: `git status --porcelain=v2 --branch` and `git rev-parse --git-dir --git-common-dir`; neither contacts a remote. And `ccusage claude daily --json --since <first of last month>` for the usage section, when [ccusage](https://github.com/ccusage/ccusage) is installed (`npm i -g ccusage`): it reads Claude Code's local transcripts and may fetch model prices; without it the usage section says so and everything else works.
 - **Reads** through the mods API: session usage (context, cost, plan limits), folder, model, prompt count, the agent roster, each model request's model and effort, each finished turn's duration and token counts, each tool call's name (and, for Bash, the command and its description; for Agent, the agent id), the ids and statuses in task notifications, and the effort row of `/config` until the first request reports one. It never reads response text, files, environment variables or credentials.
-- **Sends** one request of its own, a `GET https://api.anthropic.com/api/oauth/usage` for the plan limits, through Claude Code with the session's own Claude login: the plugin holds an opaque handle, never the token. Not sent with an API key or a cloud provider, nor while `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set. It writes no files. Session state lives in `$.state`; the last ccusage report is kept in the plugin's `$.store`.
+- **Sends** one request of its own, a `GET https://api.anthropic.com/api/oauth/usage` for the plan limits, usage credits and the weekly limit by product, through Claude Code with the session's own Claude login: the plugin holds an opaque handle, never the token. Not sent with an API key or a cloud provider, nor while `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set. It writes no files. Session state lives in `$.state`; the last ccusage report is kept in the plugin's `$.store`.
 - **Changes** nothing: every hook passes the event through unchanged.
 
 ## Develop

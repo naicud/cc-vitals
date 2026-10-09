@@ -69,13 +69,44 @@ const WEEK_END = new Date(NOW + 3 * 86_400_000).toISOString()
 /** A reset time as the usage endpoint spells it: microseconds and an offset. */
 const endpointTime = (iso: string, ms = 314) => iso.replace('.000Z', `.${ms}096+00:00`)
 
-/** The usage endpoint's answer, the shape it has: both windows and fields Vitals does not read. */
-const planAnswer = (fiveHour: number, weekly: number, weekEnd = endpointTime(WEEK_END)) =>
+const CREDITS_OFF = { is_enabled: false, monthly_limit: null, used_credits: null, utilization: null, currency: null, decimal_places: null }
+
+type PlanOptions = { severity?: string; fable?: number; credits?: Record<string, unknown> }
+
+/**
+ * The usage endpoint's answer in the shape it has: both windows, the usage rows grading them (the
+ * weekly one active), Fable's own weekly limit at up to half the weekly, usage credits, the weekly
+ * limit by product, and fields Vitals does not read.
+ */
+const planAnswer = (fiveHour: number, weekly: number, { severity = 'normal', fable = 0, credits = CREDITS_OFF }: PlanOptions = {}) =>
   JSON.stringify({
     five_hour: { utilization: fiveHour, resets_at: endpointTime(FIVE_HOUR_END), limit_dollars: null },
-    seven_day: { utilization: weekly, resets_at: weekEnd, limit_dollars: null },
+    seven_day: { utilization: weekly, resets_at: endpointTime(WEEK_END), limit_dollars: null },
     seven_day_opus: null,
-    limits: [{ kind: 'session', group: 'session', percent: fiveHour }],
+    iguana_necktie: { utilization: 0, resets_at: null, limit_dollars: 250 },
+    extra_usage: credits,
+    limits: [
+      { kind: 'session', group: 'session', percent: fiveHour, severity: 'normal', resets_at: endpointTime(FIVE_HOUR_END), scope: null, is_active: false },
+      { kind: 'weekly_all', group: 'weekly', percent: weekly, severity, resets_at: endpointTime(WEEK_END), scope: null, is_active: true },
+      {
+        kind: 'weekly_scoped',
+        group: 'weekly',
+        percent: fable,
+        severity: 'normal',
+        resets_at: endpointTime(WEEK_END),
+        scope: { model: { id: null, display_name: 'Fable' }, surface: null },
+        is_active: false,
+      },
+    ],
+    seven_day_breakdown: {
+      as_of: new Date(NOW - 5 * 60_000).toISOString(),
+      rows: [
+        { key: 'claude_code', display_name: 'Claude Code', percent: 80 },
+        { key: 'chat', display_name: 'Chats', percent: 20 },
+        { key: 'cowork', display_name: 'Cowork', percent: 0 },
+      ],
+    },
+    weekly_scoped_shares: [{ limit_index: 2, used_percent_of_weekly: 0, allowance_percent_of_weekly: 50 }],
   })
 
 /** The session's login and what the usage endpoint answers it; each request is noted. */
@@ -483,17 +514,40 @@ test('a plan limit past 80% raises one toast', async ($, on) => {
   expect(toasts).toEqual(['Weekly usage limit at 85% · resets in 3d 0h'])
 })
 
-test('the usage endpoint answers both plan windows, a nulled one left out', () => {
-  expect(parsePlanUsage(planAnswer(7, 33.333))).toEqual([
-    { kind: 'five_hour', percent: 7, resetsAt: new Date(NOW + 2 * 3_600_000 + 314).toISOString() },
-    { kind: 'seven_day', percent: 33.3, resetsAt: new Date(NOW + 3 * 86_400_000 + 314).toISOString() },
-  ])
-  expect(parsePlanUsage(JSON.stringify({ five_hour: { utilization: 7, resets_at: null }, seven_day: null }))).toEqual([
-    { kind: 'five_hour', percent: 7, resetsAt: null },
-  ])
-  expect(parsePlanUsage(JSON.stringify({ five_hour: { utilization: '7' } }))).toEqual([])
+test('the usage endpoint answers the windows graded by their rows, the other rows, credits and shares', () => {
+  const week = new Date(NOW + 3 * 86_400_000 + 314).toISOString()
+  expect(parsePlanUsage(planAnswer(7, 33.333))).toEqual({
+    limits: [
+      { kind: 'five_hour', percent: 7, resetsAt: new Date(NOW + 2 * 3_600_000 + 314).toISOString(), severity: 'normal', isActive: false },
+      { kind: 'seven_day', percent: 33.3, resetsAt: week, severity: 'normal', isActive: true },
+    ],
+    rows: [{ kind: 'weekly_scoped', label: 'Fable', percent: 0, resetsAt: week, severity: 'normal', isActive: false, ofWeekly: 50 }],
+    credits: null,
+    breakdown: {
+      asOf: new Date(NOW - 5 * 60_000).toISOString(),
+      rows: [
+        { name: 'Claude Code', percent: 80 },
+        { name: 'Chats', percent: 20 },
+        { name: 'Cowork', percent: 0 },
+      ],
+    },
+  })
+  // Credits come in minor units: on, or off once spent.
+  const on = { is_enabled: true, monthly_limit: 5000, used_credits: 1250, currency: 'usd', decimal_places: 2 }
+  expect(parsePlanUsage(planAnswer(7, 33, { credits: on }))?.credits).toEqual({ isOn: true, used: 12.5, limit: 50, currency: 'USD' })
+  const spent = { is_enabled: false, monthly_limit: 5000, used_credits: 5000, currency: 'EUR' }
+  expect(parsePlanUsage(planAnswer(7, 33, { credits: spent }))?.credits).toEqual({ isOn: false, used: 50, limit: 50, currency: 'EUR' })
+  // An older answer: windows alone, one nulled, no rows; anything but an object is no answer.
+  expect(parsePlanUsage(JSON.stringify({ five_hour: { utilization: 7, resets_at: null }, seven_day: null }))).toEqual({
+    limits: [{ kind: 'five_hour', percent: 7, resetsAt: null }],
+    rows: [],
+    credits: null,
+    breakdown: null,
+  })
+  expect(parsePlanUsage(JSON.stringify({ five_hour: { utilization: '7' } }))?.limits).toEqual([])
   expect(parsePlanUsage('<html>')).toBeNull()
   expect(parsePlanUsage('null')).toBeNull()
+  expect(parsePlanUsage('[]')).toBeNull()
 })
 
 test('two readings of a window: the higher of the same window, the later window, the one not ended', () => {
@@ -502,6 +556,10 @@ test('two readings of a window: the higher of the same window, the later window,
   // One window, its end spelled a fraction of a second apart: the higher, the end to the minute.
   expect(mergeLimits([week(85, at(86_400_000))], [week(87, at(86_400_000 + 314))], NOW)).toEqual([week(87, at(86_400_000))])
   expect(mergeLimits([week(88.5, at(86_400_000))], [week(87, at(86_400_000 + 314))], NOW)).toEqual([week(88.5, at(86_400_000))])
+  // The higher reading of the window keeps the endpoint's grade of it; another window does not.
+  const graded = { ...week(87, at(86_400_000 + 314)), severity: 'warning', isActive: true }
+  expect(mergeLimits([week(88.5, at(86_400_000))], [graded], NOW)).toEqual([{ ...week(88.5, at(86_400_000)), severity: 'warning', isActive: true }])
+  expect(mergeLimits([week(2, at(7 * 86_400_000))], [graded], NOW)).toEqual([week(2, at(7 * 86_400_000))])
   // A new window after a reset starts low: the later window wins.
   expect(mergeLimits([week(95, at(-60_000))], [week(2, at(7 * 86_400_000))], NOW)).toEqual([week(2, at(7 * 86_400_000))])
   expect(mergeLimits([week(2, at(7 * 86_400_000))], [week(95, at(86_400_000))], NOW)).toEqual([week(2, at(7 * 86_400_000))])
@@ -586,4 +644,67 @@ test('with no Claude login the usage endpoint is not asked and the last response
 
   expect(login.asked).toEqual([])
   expect(await bandText($, 'terminal')).toContain('85%')
+})
+
+const REPORT_PROPS = { title: 'r', isFocused: false, bodyColumns: 120, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 60 }, view: {} }
+
+test('the weekly meter takes the server grade and mark; a model limit shows in the band once used, always in the pane', async ($, on) => {
+  const login = account(planAnswer(40, 50, { severity: 'critical' }))
+  const clock = mock.clock(on, { now: NOW })
+  fakeEngine(on, [], [], null, ROSTER, login)
+  await runSession($)
+  await clock.settle()
+
+  const band = await $.ui.mount({ plugin: 'vitals', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  const text = (await band.find({ text: /./ }))?.text ?? ''
+  expect(text).toContain('▸📅 WEEKLY')
+  expect(text).not.toContain('FABLE')
+  // The headers' 85% outweighs the endpoint's 50% in the same window; its thresholds make it amber,
+  // the server's grade makes it red.
+  expect((await band.findAll({ type: 'Text', text: '85%' })).map(t => t.props.color)).toEqual(['error'])
+
+  const pane = await $.ui.mount({ plugin: 'vitals', surface: 'terminal', component: 'Pane', requestId: 'vitals', props: REPORT_PROPS })
+  expect((await pane.find({ text: /./ }))?.text).toContain('📅 FABLE')
+
+  login.answer = { status: 200, text: planAnswer(40, 50, { fable: 12 }) }
+  await clock.advance(5 * 60_000)
+  expect(await bandText($, 'terminal')).toMatch(/📅 FABLE.*12%/)
+})
+
+test('usage credits show while on, spent against the month\'s limit', async ($, on) => {
+  const credits = { is_enabled: true, monthly_limit: 5000, used_credits: 1250, currency: 'USD', decimal_places: 2 }
+  const clock = mock.clock(on, { now: NOW })
+  fakeEngine(on, [], [], null, ROSTER, account(planAnswer(40, 50, { credits })))
+  await runSession($)
+  await clock.settle()
+
+  expect(await bandText($, 'terminal')).toMatch(/💳 CREDITS.*25%.*\$12\.50\/\$50\.00/)
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: /vitals report puts the account's plan limits, model limits and product shares first`, async ($, on) => {
+    const clock = mock.clock(on, { now: NOW })
+    fakeEngine(on, [], [], null, ROSTER, account(planAnswer(40, 87)))
+    await runSession($)
+    await clock.settle()
+
+    const report = await $.ui.mount({ plugin: 'vitals', surface, component: 'Pane', requestId: 'vitals-report', props: REPORT_PROPS })
+    const text = (await report.find({ text: /./ }))?.text ?? ''
+    expect(text.indexOf('🎯 PLAN LIMITS')).toBeLessThan(text.indexOf('📊 USAGE REPORT'))
+    expect(text).toContain('▸ Weekly · all models')
+    expect(text).toContain('Weekly · Fable')
+    expect(text).toContain('up to 50% of weekly')
+    expect(text).toContain('🧭 THIS WEEK BY PRODUCT')
+    expect(text).toMatch(/Claude Code.*80%/)
+  })
+}
+
+test('with no reading of the account the report is ccusage alone', async ($, on) => {
+  fakeEngine(on)
+  await runSession($)
+
+  const report = await $.ui.mount({ plugin: 'vitals', surface: 'terminal', component: 'Pane', requestId: 'vitals-report', props: REPORT_PROPS })
+  const text = (await report.find({ text: /./ }))?.text ?? ''
+  expect(text).not.toContain('PLAN LIMITS')
+  expect(text).toContain('📊 USAGE REPORT')
 })

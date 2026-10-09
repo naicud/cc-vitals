@@ -1,4 +1,9 @@
-export type Limit = { kind: string; percent: number; resetsAt: string | null }
+/**
+ * A plan limit. `severity` and `isActive` are the server's, when its usage endpoint read the same
+ * window: its grade for the meter's colour (`normal`, `warning`, `critical`) and whether this is
+ * the limit a single-value indicator shows.
+ */
+export type Limit = { kind: string; percent: number; resetsAt: string | null; severity?: string; isActive?: boolean }
 
 export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number }
 
@@ -103,8 +108,44 @@ export type UsageHistory = { at: number; days: DayUsage[] }
 /** Why the history could not be read this time; the last good one stays drawn. */
 export type HistoryProblem = { at: number; reason: string }
 
-/** The plan limits as the account's usage endpoint last reported them, and when. */
-export type PlanUsage = { at: number; limits: Limit[] }
+/**
+ * One of the server's usage rows beyond the 5-hour and weekly windows, as it sends them: a model's
+ * or a surface's own weekly limit (`weekly_scoped`), or a meter Vitals does not know yet.
+ */
+export type PlanRow = {
+  kind: string
+  /** The server's label for what the row is for (`Fable`), else its kind. */
+  label: string
+  percent: number
+  resetsAt: string | null
+  severity: string
+  isActive: boolean
+  /** The share of the weekly limit this row may use, when the server says (`50`). */
+  ofWeekly: number | null
+}
+
+/** Usage credits (extra usage), in the currency's major units: what they cover once a limit is hit. */
+export type Credits = {
+  /** Whether they cover sends now: off when turned off, or when the month's limit is spent. */
+  isOn: boolean
+  used: number
+  /** The month's limit; null for none. */
+  limit: number | null
+  currency: string
+}
+
+/** Who spent the weekly limit, by product (Claude Code, chats, Cowork, ...), as shares of it. */
+export type Breakdown = { asOf: string | null; rows: { name: string; percent: number }[] }
+
+/** The account's usage as its usage endpoint last reported it, and when. */
+export type PlanUsage = {
+  at: number
+  limits: Limit[]
+  rows: PlanRow[]
+  /** Null while usage credits are off. */
+  credits: Credits | null
+  breakdown: Breakdown | null
+}
 
 declare module 'claude-code' {
   interface PluginState {

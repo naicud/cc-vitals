@@ -1,6 +1,6 @@
 import type { Elements, RenderChildren, RenderSurface } from 'claude-code'
 
-import { tone } from './format'
+import { meterTone } from './format'
 import type { Part } from './format'
 
 // The band is raised on the terminal and the desktop only; every surface's table has Box and Text.
@@ -159,8 +159,8 @@ export const parts = (els: Els, list: Part[]) => {
 }
 
 // Drawn as an image on the desktop, so it cannot follow the theme: a translucent track reads on both.
-const svgBar = (percent: number, width: number) => {
-  const fill = percent >= 95 ? '#e5484d' : percent >= 80 ? '#e0a030' : '#2f7de1'
+const svgBar = (percent: number, width: number, color: string | undefined) => {
+  const fill = color === 'error' ? '#e5484d' : color === 'warning' ? '#e0a030' : '#2f7de1'
   const filled = Math.round((Math.min(percent, 100) / 100) * width)
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="8" viewBox="0 0 ${width} 8">` +
@@ -179,18 +179,18 @@ export const blocks = (percent: number, cells: number) => {
   return { filled: '█'.repeat(whole) + partial, track: '░'.repeat(Math.max(0, cells - whole - (partial ? 1 : 0))) }
 }
 
-/** A bar `cells` wide: blocks in the terminal, an SVG bar on the desktop. */
-export const gauge = (canvas: Canvas, name: string, percent: number, cells: number) => {
+/** A bar `cells` wide in the meter's tone: blocks in the terminal, an SVG bar on the desktop. */
+export const gauge = (canvas: Canvas, name: string, percent: number, cells: number, color = meterTone(percent)) => {
   const { Box, Text } = canvas.els
   if (canvas.surface === 'desktop' && 'Svg' in canvas.els) {
     const { Svg } = canvas.els
     const px = cells * 9
-    return <Svg source={svgBar(percent, px)} alt={`${name} ${percent}% used`} width={px} height={8} />
+    return <Svg source={svgBar(percent, px, color)} alt={`${name} ${percent}% used`} width={px} height={8} />
   }
   const bar = blocks(percent, cells)
   return (
     <Box flexDirection="row" flexShrink={0}>
-      {bar.filled !== '' && <Text color={tone(percent) ?? BAR_FILL}>{bar.filled}</Text>}
+      {bar.filled !== '' && <Text color={color ?? BAR_FILL}>{bar.filled}</Text>}
       {bar.track !== '' && <Text dimColor>{bar.track}</Text>}
     </Box>
   )
@@ -199,15 +199,19 @@ export const gauge = (canvas: Canvas, name: string, percent: number, cells: numb
 /** The cells a meter takes besides its bar: icon, label, percentage and detail. */
 export const meterChrome = (label: string, detail: string) => cellWidth(label) + 1 + 1 + 4 + (detail === '' ? 0 : 1 + cellWidth(detail))
 
-/** `⛽ CTX ███████▍░░░░  29% 289k/1M`: a label, a bar, the percentage and a dim detail. */
-export const meter = (canvas: Canvas, label: string, percent: number | null, detail: string, cells: number) => {
+/**
+ * `⛽ CTX ███████▍░░░░  29% 289k/1M`: a label, a bar, the percentage and a dim detail, amber from
+ * 80% and red from 95%, or as the server grades it (`severity`) when that is graver.
+ */
+export const meter = (canvas: Canvas, label: string, percent: number | null, detail: string, cells: number, severity?: string) => {
   const { Box, Text } = canvas.els
+  const color = percent === null ? undefined : meterTone(percent, severity)
   return (
     <Box flexDirection="row" flexShrink={0}>
       <Text bold>{`${label} `}</Text>
-      {percent === null ? <Text dimColor>{'─'.repeat(cells)}</Text> : gauge(canvas, label, percent, cells)}
+      {percent === null ? <Text dimColor>{'─'.repeat(cells)}</Text> : gauge(canvas, label, percent, cells, color)}
       <Box width={5} justifyContent="flex-end" flexShrink={0}>
-        <Text bold color={percent === null ? undefined : tone(percent)} dimColor={percent === null}>
+        <Text bold color={color} dimColor={percent === null}>
           {percent === null ? '—' : `${percent}%`}
         </Text>
       </Box>

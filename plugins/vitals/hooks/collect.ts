@@ -1,6 +1,6 @@
 import type { AgentInfo, ConfigRow, SessionContextBreakdown, SessionUsage } from 'claude-code'
 
-import type { AgentStat, ContextPart, Limit, LiveTool, RunStatus, ShellStat, ToolCounts, Tokens } from '../types'
+import type { AgentStat, Breakdown, ContextPart, Credits, Limit, LiveTool, PlanRow, PlanUsage, RunStatus, ShellStat, ToolCounts, Tokens } from '../types'
 import { NO_TOKENS, addTokens, isActive, isShown, limitLabel, notifiedStatus, runStatus, until } from './format'
 
 // Pure folds over the session's values: register.tsx reads the engine and writes the results.
@@ -43,30 +43,114 @@ export const metersOf = (
   }
 }
 
-/** The plan windows read from the account's usage endpoint; the rest of its answer is not read. */
-const PLAN_WINDOWS = ['five_hour', 'seven_day']
+/** A field of an object in the endpoint's answer; undefined for anything else. */
+const field = (value: unknown, key: string): unknown => (typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined)
+
+const numberAt = (value: unknown, key: string) => {
+  const n = field(value, key)
+  return typeof n === 'number' && Number.isFinite(n) ? n : null
+}
+
+const textAt = (value: unknown, key: string) => {
+  const text = field(value, key)
+  return typeof text === 'string' ? text : null
+}
+
+/** A time the endpoint spells to the microsecond, as `Date` spells it; null when unreadable. */
+const isoOf = (text: string | null) => {
+  const at = text === null ? NaN : Date.parse(text)
+  return Number.isFinite(at) ? new Date(at).toISOString() : null
+}
+
+/** A percentage to one decimal, as the headers give it. */
+const tenths = (n: number) => Math.round(n * 10) / 10
+
+/** The windows the headers report too, each with the kind of the server's usage row that grades it. */
+const PLAN_WINDOWS = [
+  { kind: 'five_hour', row: 'session' },
+  { kind: 'seven_day', row: 'weekly_all' },
+]
 
 /**
- * The plan limits in an answer of `/api/oauth/usage`, the figures claude.ai's usage page shows:
- * null for an answer that is not JSON. A window the answer leaves out or nulls is left out.
+ * Usage credits from the answer's `extra_usage`, whose amounts are in the currency's minor units:
+ * null while they are off and nothing has been spent on them.
  */
-export const parsePlanUsage = (text: string): Limit[] | null => {
+const creditsOf = (extra: unknown): Credits | null => {
+  const used = numberAt(extra, 'used_credits') ?? 0
+  const isOn = field(extra, 'is_enabled') === true
+  if (!isOn && used <= 0) return null
+  const places = numberAt(extra, 'decimal_places')
+  const unit = 10 ** (places !== null && Number.isInteger(places) && places >= 0 && places <= 4 ? places : 2)
+  const limit = numberAt(extra, 'monthly_limit')
+  return { isOn, used: used / unit, limit: limit === null ? null : limit / unit, currency: (textAt(extra, 'currency') ?? 'USD').toUpperCase() }
+}
+
+/** The weekly limit's shares by product from the answer's `seven_day_breakdown`; null without rows. */
+const breakdownOf = (value: unknown): Breakdown | null => {
+  const rows = field(value, 'rows')
+  const shares = (Array.isArray(rows) ? rows : []).flatMap(r => {
+    const name = textAt(r, 'display_name') ?? textAt(r, 'key')
+    const percent = numberAt(r, 'percent')
+    return name === null || percent === null ? [] : [{ name, percent: tenths(percent) }]
+  })
+  return shares.length === 0 ? null : { asOf: isoOf(textAt(value, 'as_of')), rows: shares }
+}
+
+/**
+ * The account's usage in an answer of `/api/oauth/usage`, what claude.ai's usage page and `/usage`
+ * show: null for an answer that is not a JSON object. The 5-hour and weekly windows carry the grade
+ * of their usage row; the other rows (a model's own weekly limit) come as the server sends them,
+ * classified by kind, never by label. A window or a row the answer leaves out or nulls is left out.
+ */
+export const parsePlanUsage = (text: string): Omit<PlanUsage, 'at'> | null => {
   let body: unknown
   try {
     body = JSON.parse(text)
   } catch {
     return null
   }
-  if (typeof body !== 'object' || body === null) return null
-  return PLAN_WINDOWS.flatMap(kind => {
-    const window: unknown = Reflect.get(body, kind)
-    if (typeof window !== 'object' || window === null) return []
-    const utilization: unknown = Reflect.get(window, 'utilization')
-    const resetsAt: unknown = Reflect.get(window, 'resets_at')
-    if (typeof utilization !== 'number' || !Number.isFinite(utilization)) return []
-    const end = typeof resetsAt === 'string' ? Date.parse(resetsAt) : NaN
-    return [{ kind, percent: Math.round(utilization * 10) / 10, resetsAt: Number.isFinite(end) ? new Date(end).toISOString() : null }]
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return null
+  const listed = field(body, 'limits')
+  const usageRows: unknown[] = Array.isArray(listed) ? listed : []
+  const shares = field(body, 'weekly_scoped_shares')
+  const ofWeekly = (index: number) =>
+    numberAt(Array.isArray(shares) ? shares.find(share => numberAt(share, 'limit_index') === index) : undefined, 'allowance_percent_of_weekly')
+  const limits = PLAN_WINDOWS.flatMap(({ kind, row }): Limit[] => {
+    const window = field(body, kind)
+    const percent = numberAt(window, 'utilization')
+    if (percent === null) return []
+    const graded = usageRows.find(r => textAt(r, 'kind') === row)
+    const severity = textAt(graded, 'severity')
+    const active = field(graded, 'is_active')
+    return [
+      {
+        kind,
+        percent: tenths(percent),
+        resetsAt: isoOf(textAt(window, 'resets_at')),
+        ...(severity === null ? {} : { severity }),
+        ...(typeof active === 'boolean' ? { isActive: active } : {}),
+      },
+    ]
   })
+  const windowRows = new Set(PLAN_WINDOWS.map(w => w.row))
+  const rows = usageRows.flatMap((r, index): PlanRow[] => {
+    const kind = textAt(r, 'kind')
+    const percent = numberAt(r, 'percent')
+    if (kind === null || percent === null || windowRows.has(kind)) return []
+    const scope = field(r, 'scope')
+    return [
+      {
+        kind,
+        label: textAt(field(scope, 'model'), 'display_name') ?? textAt(field(scope, 'surface'), 'display_name') ?? kind,
+        percent: tenths(percent),
+        resetsAt: isoOf(textAt(r, 'resets_at')),
+        severity: textAt(r, 'severity') ?? 'normal',
+        isActive: field(r, 'is_active') === true,
+        ofWeekly: ofWeekly(index),
+      },
+    ]
+  })
+  return { limits, rows, credits: creditsOf(field(body, 'extra_usage')), breakdown: breakdownOf(field(body, 'seven_day_breakdown')) }
 }
 
 /** Two readings of one window end within this of each other; two windows of a kind end hours apart. */
@@ -77,19 +161,28 @@ const endOf = (limit: Limit) => {
   return Number.isFinite(end) ? end : null
 }
 
+/** A limit's grade from the server, as fields to spread: none where it has not graded it. */
+const gradeOf = (limit: Limit) => ({
+  ...(limit.severity === undefined ? {} : { severity: limit.severity }),
+  ...(limit.isActive === undefined ? {} : { isActive: limit.isActive }),
+})
+
 /**
- * One limit from two readings of it. Within a window usage only grows, so of two readings of the
- * same window the higher is the truth, whichever source took it and whenever; a window that has
- * ended loses to one that has not, an earlier window to a later one, an unknown end to a known one.
+ * One limit from two readings of it, `b` the usage endpoint's. Within a window usage only grows, so
+ * of two readings of the same window the higher is the truth, whichever source took it and when,
+ * graded as the endpoint graded that window; a window that has ended loses to one that has not, an
+ * earlier window to a later one, an unknown end to a known one.
  */
-const pickLimit = (a: Limit, b: Limit, now: number) => {
+const pickLimit = (a: Limit, b: Limit, now: number): Limit => {
   const [endA, endB] = [endOf(a), endOf(b)]
   const [isOverA, isOverB] = [endA !== null && endA <= now, endB !== null && endB <= now]
   if (isOverA !== isOverB) return isOverA ? b : a
   if (endA === null && endB !== null) return b
   if (endB === null && endA !== null) return a
   if (endA !== null && endB !== null && Math.abs(endA - endB) >= SAME_WINDOW_MS) return endA > endB ? a : b
-  return a.percent >= b.percent ? a : b
+  const higher = a.percent >= b.percent ? a : b
+  const graded = b.severity !== undefined || b.isActive !== undefined ? b : a
+  return { kind: higher.kind, percent: higher.percent, resetsAt: higher.resetsAt, ...gradeOf(graded) }
 }
 
 /**

@@ -158,13 +158,13 @@ async function refreshPlan($: EngineInterface) {
       planPausedUntil = now + pauseOf(answer.headers['retry-after'], now)
       return
     }
-    const limits = answer.ok ? parsePlanUsage(answer.text) : null
-    if (limits === null) return
+    const usage = answer.ok ? parsePlanUsage(answer.text) : null
+    if (usage === null) return
     // A read that hung past its timeout may land after a later one: the later stays.
     const held = await read($, plan)
     if (held !== null && held.at > now) return
-    await update($, plan, () => ({ at: now, limits }))
-    const snap = await update($, snapshot, s => (s === null ? s : { ...s, limits: mergeLimits(s.limits, limits, now) }))
+    await update($, plan, () => ({ at: now, ...usage }))
+    const snap = await update($, snapshot, s => (s === null ? s : { ...s, limits: mergeLimits(s.limits, usage.limits, now) }))
     if (snap !== null) await noteLimits($, snap.limits, now)
   } catch {
     // Offline, nonessential traffic turned off, or a policy refused it: the figures on show stay.
@@ -317,7 +317,7 @@ async function tick($: EngineInterface) {
 async function gather($: EngineInterface, canvas: Canvas, room: number, rows: number, isWorking: boolean, cacheTtlMs: number) {
   const snap = await read($, snapshot)
   if (snap === null) return null
-  const [now, turn, sessionTotals, compacted, level, agentList, shellList, running, toolCounts, past, problem] = await Promise.all([
+  const [now, turn, sessionTotals, compacted, level, agentList, shellList, running, toolCounts, past, problem, account] = await Promise.all([
     $.clock.now(),
     read($, lastTurn),
     read($, totals),
@@ -329,6 +329,7 @@ async function gather($: EngineInterface, canvas: Canvas, room: number, rows: nu
     read($, tools),
     read($, history),
     read($, historyProblem),
+    read($, plan),
   ])
   const input: BandInput = {
     canvas,
@@ -347,6 +348,7 @@ async function gather($: EngineInterface, canvas: Canvas, room: number, rows: nu
     tools: toolCounts,
     history: past,
     historyProblem: problem,
+    plan: account,
     forecasts: snap.limits.flatMap(l => forecast(l, limitSamples.get(l.kind) ?? [], now) ?? []),
     cacheTtlMs,
   }
@@ -396,6 +398,7 @@ export const register: Register = (on, options) => {
     }
     if (arg === 'report') {
       void refreshHistory($, true)
+      void refreshPlan($)
       await $.ui.open({ id: REPORT_ID, title: 'Vitals · usage report' })
       return { text: 'Vitals usage report opened; refreshing from ccusage.' }
     }
@@ -541,8 +544,8 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: REPORT_ID }, async ($, e) => {
     const canvas = { els: $.ui.resolve(e), surface: e.surface }
-    const [now, past, problem] = await Promise.all([$.clock.now(), read($, history), read($, historyProblem)])
+    const [now, past, problem, account] = await Promise.all([$.clock.now(), read($, history), read($, historyProblem), read($, plan)])
 
-    return drawReport(canvas, e.props.bodyColumns, now, past, problem, isReadingHistory)
+    return drawReport(canvas, e.props.bodyColumns, now, past, problem, isReadingHistory, account)
   })
 }

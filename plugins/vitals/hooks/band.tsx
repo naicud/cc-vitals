@@ -2,7 +2,7 @@ import type { RenderChildren } from 'claude-code'
 
 import type { View } from '../types'
 
-import { ago, count, effortPips, limitShortLabel, money, prettyModel, until } from './format'
+import { ago, cash, count, effortPips, limitShortLabel, money, prettyModel, until } from './format'
 import type { Part } from './format'
 import type { Forecast } from './forecast'
 import { agentsSection, contextSection, effortCell, shellsSection, tokensSection, toolsSection, usageSection } from './sections'
@@ -26,10 +26,36 @@ const RANK = { tokens: 0, agents: 1, tools: 2, context: 3, usage: 4, shells: 5 }
 const TWO_COLUMNS_FROM = 150
 const COLUMN_GAP = 2
 
-type Item = { label: string; percent: number | null; detail: string }
+type Item = { label: string; percent: number | null; detail: string; severity?: string }
+
+/** The mark of the limit the server names as the one a single-value indicator shows. */
+const ACTIVE = '▸'
+
+/**
+ * The account's other usage meters: each of the server's other rows (a model's own weekly limit)
+ * and usage credits while they are on or spent. With `isEvery` false, the band's, a row shows only
+ * once it counts: used, graded above normal, or the active one.
+ */
+const accountItems = (input: BandInput, isEvery: boolean): Item[] => {
+  const plan = input.plan
+  if (plan === null) return []
+  const rows = plan.rows
+    .filter(r => isEvery || r.percent > 0 || r.isActive || r.severity !== 'normal')
+    .map(r => ({
+      label: `${r.isActive ? ACTIVE : ''}${r.kind.startsWith('weekly') ? '📅' : '⏳'} ${r.label.toUpperCase()}`,
+      percent: r.percent,
+      detail: r.resetsAt ? `↻ ${until(r.resetsAt, input.now)}` : '',
+      severity: r.severity,
+    }))
+  const c = plan.credits
+  if (c === null) return rows
+  const spent = c.limit === null ? `${cash(c.used, c.currency)} · no cap` : `${cash(c.used, c.currency)}/${cash(c.limit, c.currency)}`
+  const percent = c.limit === null || c.limit <= 0 ? null : Math.round((c.used / c.limit) * 100)
+  return [...rows, { label: '💳 CREDITS', percent, detail: `${spent}${c.isOn ? '' : ' · off'}` }]
+}
 
 /** Context, the road to auto-compaction, and the plan limits: every one a bar. */
-const meterItems = (input: BandInput): Item[] => {
+const meterItems = (input: BandInput, isEvery: boolean): Item[] => {
   const { snap, compactions: c } = input
   const done = c !== null && c.since === snap.startedAt ? c.count : 0
   const compactAt = snap.autoCompactAt
@@ -47,10 +73,12 @@ const meterItems = (input: BandInput): Item[] => {
     },
     { label: '🗜 COMPACT', percent: toCompact?.percent ?? null, detail: `${compactDetail}${done > 0 ? ` · ×${done}` : ''}` },
     ...snap.limits.map(l => ({
-      label: `${LIMIT_ICONS[l.kind] ?? '⏳'} ${LIMIT_LABELS[l.kind] ?? limitShortLabel(l.kind)}`,
+      label: `${l.isActive === true ? ACTIVE : ''}${LIMIT_ICONS[l.kind] ?? '⏳'} ${LIMIT_LABELS[l.kind] ?? limitShortLabel(l.kind)}`,
       percent: l.percent,
       detail: l.resetsAt ? `↻ ${until(l.resetsAt, input.now)}` : '',
+      severity: l.severity,
     })),
+    ...accountItems(input, isEvery),
   ]
 }
 
@@ -84,8 +112,8 @@ const forecastParts = (forecasts: Forecast[], now: number): Part[] =>
       : { text: `${name} out at ${clockTime(f.outAt, now)}, reset ${clockTime(f.resetAt, now)} ⚠ (${pace})`, emphasis: 'warning' as const }
   })
 
-/** The top box: model, effort, where, session, cost; then the meters. */
-const vitals = (input: BandInput, room: number) => {
+/** The top box: model, effort, where, session, cost; then the meters, every one of them with `isEvery`. */
+const vitals = (input: BandInput, room: number, isEvery = false) => {
   const { Box, Text } = input.canvas.els
   const { snap } = input
   const where =
@@ -96,7 +124,7 @@ const vitals = (input: BandInput, room: number) => {
   const burn = snap.costUsd !== null && ageMs >= 5 * 60_000 ? `  🔥 ${money(snap.costUsd / (ageMs / 3_600_000))}/h` : ''
   const level = effortCell(input.effort)
   const inner = room - CARD_CELLS
-  const { rows, bar } = meterRows(meterItems(input), inner)
+  const { rows, bar } = meterRows(meterItems(input, isEvery), inner)
   const ahead = forecastParts(input.forecasts, input.now)
   const pips = input.effort === null ? '' : ` ${effortPips(input.effort)}`
   const title = `◆ VITALS   🧠 ${prettyModel(snap.model)}   ⚡ ${level.text.toUpperCase()}${pips}`
@@ -144,7 +172,7 @@ const vitals = (input: BandInput, room: number) => {
             {row.map((m, i) => (
               <Box flexDirection="row">
                 {i > 0 && <Text dimColor>{' │ '}</Text>}
-                {meter(input.canvas, m.label, m.percent, m.detail, bar)}
+                {meter(input.canvas, m.label, m.percent, m.detail, bar, m.severity)}
               </Box>
             ))}
           </Box>
@@ -248,7 +276,7 @@ export const drawAll = (input: BandInput) => {
   ]
   return (
     <Box flexDirection="column">
-      {vitals(input, input.room).box}
+      {vitals(input, input.room, true).box}
       {sections.map(s => (s === null ? null : s.full()))}
     </Box>
   )
