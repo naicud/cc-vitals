@@ -16,7 +16,7 @@ Commands:
 | :-- | :-- |
 | `/vitals-high` | Everything: the vitals box, tokens, context, usage, agents, tools, shells. The default |
 | `/vitals-medium` | The vitals box, 🧩 context and 🤖 agents |
-| `/vitals-low` | The vitals box alone: model, effort, session, cost, the four bars and the forecast |
+| `/vitals-low` | The vitals box alone: model, effort, session, cost, the bars and the forecast |
 | `/vitals` | The next level down: high → medium → low → high |
 | `/vitals pane` | A pane with every section in full: every agent, every shell, every tool |
 | `/vitals report` | The usage report: 🎯 your account's plan limits (each model's own weekly limit, usage credits, and this week's limit by product: Claude Code, chats, Cowork), then the last 14 days, the last 6 weeks, this month and the last, and this month's models, each with bars |
@@ -37,7 +37,7 @@ The level you pick stays for the sessions that follow.
 
 ![vitals-high: the vitals box; tokens per turn and session with cache read and write and hit rate; the context bar; usage today, this week and this month with a sparkline; the agents table; the tools table with calls, errors and a usage bar](docs/screenshots/vitals-high.png)
 
-**`/vitals report`**: the usage report in a pane, from ccusage: the last 14 days, the last 6 weeks, this month and the last, and this month's models.
+**`/vitals report`**: the usage report in a pane. Since 0.9 it opens with 🎯 your account's plan limits, read from claude.ai; below them, from ccusage: the last 14 days, the last 6 weeks, this month and the last, and this month's models.
 
 <img src="docs/screenshots/vitals-report.png" alt="vitals report: cost, tokens and top model per day for 14 days with bars; cost per week for 6 weeks with the change against the week before; this month and last; this month's models with their share" width="600">
 
@@ -50,7 +50,7 @@ The level you pick stays for the sessions that follow.
 | Section | Contents |
 | :-- | :-- |
 | Header | 🧠 model, ⚡ the reasoning effort the last request used (pips out of five), 📁 folder, 🌿 branch (🌳 in a worktree), ahead/behind, changed files, ⏳ session age, prompts, 💸 cost, 🔥 burn rate per hour |
-| Meters | ⛽ CTX, the context window (against the auto-compact window when one is set, as `/context` does); 🗜 COMPACT, the context against the auto-compact threshold, tokens left and compactions so far; ⏳ 5H LIMIT and 📅 WEEKLY plan limits with reset countdowns, as claude.ai's usage page counts them: every session, machine and claude.ai chat on the account, not only this session; `▸` marks the one the server names as the limit that counts now. A model's own weekly limit (📅 FABLE) once it is used or graded above normal, and 💳 CREDITS, spent against the month's limit, while usage credits are on or spent; `/vitals pane` shows them always. Bars at an eighth of a cell, two to a row when the terminal is narrow |
+| Meters | ⛽ CTX, the context window (against the auto-compact window when one is set, as `/context` does); 🗜 COMPACT, the context against the auto-compact threshold, tokens left and compactions so far; ⏳ 5H LIMIT and 📅 WEEKLY plan limits with reset countdowns, as claude.ai's usage page counts them: every session, machine and claude.ai chat on the account, not only this session; `▸` marks the one the server names as the limit that counts now. A model's own weekly limit (📅 FABLE) once it is used, graded above normal or the one that counts now, and 💳 CREDITS, spent against the month's limit, while usage credits are on or spent; `/vitals pane` shows them always. Bars at an eighth of a cell, two to a row when the terminal is narrow |
 | 🔮 Forecast | Each plan limit at the pace you spend it: the last hour's pace once there are ten minutes of it, else the window's average. Either when it runs out before its reset (⚠), or where it will stand at the reset (✓) |
 | 🧩 Context | What fills the context, as `/context` breaks it down: one bar in its colours (system prompt, tools, memory, skills, messages, ░ free, ▒ autocompact buffer) and a legend with tokens and shares. An estimate, read every 5 minutes |
 | 🔥 Tokens | Last main turn and whole session (subagents included): in, out, cache read, cache write, hit rate, total; idle time, 🧊 cache warm with the time until it expires, or 🥶 cold past the prompt-cache TTL. An interrupted turn keeps the last counted one on show |
@@ -138,6 +138,7 @@ To update by hand (without auto-update): `claude plugin marketplace update naicu
 | One line per section instead of tables | The band has few rows (a short terminal, or Claude's progress is taking them): make the terminal taller, or `/vitals pane` for everything in full |
 | No band at all | Claude Code older than v2.1.287, or the plugin disabled (`claude plugin list`, then `claude plugin enable vitals@naicud`) |
 | ⏳ 5H LIMIT or 📅 WEEKLY a point behind claude.ai | The account's usage is read every 5 minutes and after each turn: usage elsewhere shows within 5 minutes. Signed in with an API key, Bedrock or Vertex there is no account usage to read, and the limits are the ones this session's last response reported |
+| No 📅 model limit or 💳 CREDITS bar | The band shows a model's own weekly limit only once it counts (used, graded above normal, or the active one) and credits only while they are on or spent: `/vitals pane` and `/vitals report` show them always. With an API key or a cloud provider there are none to read |
 | Less than you expect | `/vitals-low` or `/vitals-medium` is on, and the level stays across sessions: `/vitals-high` brings everything back |
 
 ## Settings
@@ -181,7 +182,7 @@ plugins/vitals/
 
 ## Credits
 
-Built on [desktop-statusline](https://github.com/centminmod/claude-plugins/tree/master/plugins/desktop-statusline) by George Liu (MIT): the desktop band, limit meters and git row come from there. cc-vitals adds the terminal surface, the framed dashboard, reasoning effort, the token and cache tables, subagent and shell tracking, live tools, context composition, limit forecasts, compaction, usage reports, the three detail levels and the pane.
+Built on [desktop-statusline](https://github.com/centminmod/claude-plugins/tree/master/plugins/desktop-statusline) by George Liu (MIT): the desktop band, limit meters and git row come from there. cc-vitals adds the terminal surface, the framed dashboard, reasoning effort, the token and cache tables, subagent and shell tracking, live tools, context composition, limit forecasts, account-wide limits per model and product with usage credits, compaction, usage reports, the three detail levels and the pane.
 
 ## Licence
 
