@@ -137,8 +137,10 @@ const fakeEngine = (
   })
   on('ui.open', () => ({ value: { isPlaced: true as const } }))
   on('ui.invalidate', () => ({ value: undefined }))
-  on('store.get', () => ({ value: undefined }))
+  const store = new Map<string, unknown>()
+  on('store.get', ($, e) => ({ value: store.get(e.key) }))
   on('store.set', ($, e) => {
+    store.set(e.key, e.value)
     stored.push(e.value)
     return { value: undefined }
   })
@@ -475,6 +477,33 @@ test('/vitals steps high → medium → low → high and the store keeps the cho
     { text: 'Vitals: high · everything.' },
   ])
   expect(stored.filter(v => typeof v === 'string')).toEqual(['medium', 'low', 'high'])
+})
+
+test('after a /clear the band is drawn again at once, at the level the store keeps', async ($, on) => {
+  // A /clear empties the session's values and fires no session.start: here every Vitals value
+  // reads empty from the clear on, until Vitals writes it again.
+  let written: Set<string> | null = null
+  on('state.get', async ($, e, next) => {
+    const held = await next(e)
+    return written !== null && e.plugin === 'vitals' && !written.has(e.key) ? { value: { ...held.value, value: undefined } } : held
+  })
+  on('state.set', ($, e, next) => {
+    written?.add(e.key)
+    return next(e)
+  })
+  on('classic.SessionStart', ($, e) => {
+    if (e.source === 'clear') written = new Set()
+    return {}
+  })
+  fakeEngine(on)
+  await runSession($)
+  await $.command.run({ command: 'vitals-low', args: '', ...COMMAND })
+
+  await $.classic.SessionStart({ source: 'clear' })
+
+  const band = await bandText($, 'terminal', { ...PROPS, bodyColumns: 200 })
+  for (const text of ['◆ VITALS', '⛽ CTX', '💸 $4.21']) expect(band).toContain(text)
+  for (const text of ['🔥 TOKENS', '🤖 AGENTS', '🧩 CONTEXT']) expect(band).not.toContain(text)
 })
 
 test('a narrow vitals box puts the session on a row of its own, the cost whole', async ($, on) => {

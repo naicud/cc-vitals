@@ -253,6 +253,19 @@ async function restoreHistory($: EngineInterface) {
   if (days !== null) await update($, history, () => ({ at, days }))
 }
 
+/**
+ * A session's values from nothing: the level and the history the store keeps, then the snapshot
+ * drawn at once. Run at the start and after a /clear, which empties the session's values.
+ */
+async function begin($: EngineInterface) {
+  const saved: unknown = await $.store.get(LEVEL_KEY)
+  await update($, view, () => asLevel(saved))
+  await restoreHistory($)
+  await refresh($)
+  void refreshPlan($)
+  void refreshHistory($, false)
+}
+
 /** Shows `level` now and in the sessions to come. */
 async function setLevel($: EngineInterface, level: View) {
   await update($, view, () => level)
@@ -376,12 +389,7 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'vitals-low', description: 'Vitals: the vitals box alone (model, effort, cost, context, compaction, limits, forecast)' })
     await $.command.register({ name: 'vitals-medium', description: 'Vitals: the vitals box, what fills the context, and the agents' })
     await $.command.register({ name: 'vitals-high', description: 'Vitals: everything (tokens, context, usage, agents, tools, shells)' })
-    const saved: unknown = await $.store.get(LEVEL_KEY)
-    await update($, view, () => asLevel(saved))
-    await restoreHistory($)
-    await refresh($)
-    void refreshPlan($)
-    void refreshHistory($, false)
+    await begin($)
     $.clock.every(REFRESH_MS, () => void refresh($))
     $.clock.every(PLAN_EVERY_MS, () => void refreshPlan($))
     $.clock.every(HISTORY_EVERY_MS, () => void refreshHistory($, false))
@@ -408,6 +416,21 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'vitals-low' }, async $ => setLevel($, 'low'))
   on('command.run', { command: 'vitals-medium' }, async $ => setLevel($, 'medium'))
   on('command.run', { command: 'vitals-high' }, async $ => setLevel($, 'high'))
+
+  // A /clear goes on under a new session id with its values empty and no `session.start`: the
+  // band had nothing to draw until the next refresh. The timers and the commands carry over.
+  on('classic.SessionStart', async ($, e, next) => {
+    const started = await next(e)
+    if (e.source !== 'clear') return started
+
+    // The new conversation's context and the account's limits are read again at once.
+    breakdownAt = 0
+    contextParts = null
+    planAt = 0
+    await begin($)
+
+    return started
+  }).catch(($, e, next) => next(e))
 
   on('session.attach', async ($, e, next) => {
     const attached = await next(e)
