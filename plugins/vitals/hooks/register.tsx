@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ProcessRunResult, Register, SessionUsage } from 'claude-code'
 
 import type { AgentStat, ContextPart, Limit, LiveTool, RunStatus, ShellStat, Snapshot, Tokens, View } from '../types'
-import { drawAll, drawLevel } from './band'
+import { bandRows, drawAll, drawLevel } from './band'
 import type { BandInput } from './band'
 import {
   addShell,
@@ -528,7 +528,9 @@ export const register: Register = (on, options) => {
     if (e.props.hasSurvey) return next(e)
 
     const canvas = { els: $.ui.resolve(e), surface: e.surface }
-    const input = await gather($, canvas, e.props.bodyColumns, e.props.maxRows, e.props.isWorking, cacheTtlMs)
+    // The terminal always says which layout it draws; were it ever unsaid, the smaller band is safe.
+    const isMainScreen = e.surface === 'terminal' && e.viewport?.isFullscreen !== true
+    const input = await gather($, canvas, e.props.bodyColumns, bandRows(e.props.maxRows, isMainScreen), e.props.isWorking, cacheTtlMs)
     if (input === null) return next(e)
 
     return drawLevel(input, asLevel(await read($, view)), MAX_BAND_ROWS)

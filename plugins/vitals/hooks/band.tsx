@@ -231,6 +231,16 @@ const work = (input: BandInput, room: number, rows: number): Placed[] => [
   { section: shellsSection(input, room, Math.max(1, rows - 16), 'running'), rank: RANK.shells },
 ]
 
+/**
+ * The rows the band lays out in. In fullscreen `maxRows` is what the engine's slot, half the
+ * terminal, leaves it. On the terminal's main screen `maxRows` is the whole terminal, and the band
+ * is drawn under Claude's answer in the part of the screen that is still redrawn: a line of the
+ * answer that lands above the top of the screen is never written, and the scrollback keeps what
+ * was there before, a piece of the band. There the band takes at most half the rows, so the answer
+ * always has rows on screen to be written in.
+ */
+export const bandRows = (maxRows: number, isMainScreen: boolean) => (isMainScreen ? Math.floor(maxRows / 2) : maxRows)
+
 /** The dashboard: the vitals box on top, then the section boxes, sized to the rows the band has. */
 export const drawBand = (input: BandInput, maxBandRows: number) => {
   const { Box } = input.canvas.els

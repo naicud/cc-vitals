@@ -2,6 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
+import { bandRows } from './band'
 import { mergeLimits, mergeRoster, parseNotification, parsePlanUsage } from './collect'
 import { count, hitRate, isShown, prettyModel } from './format'
 import { forecast } from './forecast'
@@ -225,8 +226,13 @@ const runSession = async ($: Engine) => {
   await $.turn.complete({ answer: 'ok', durationMs: 12_000, isAborted: false, turnId: 't1', usage: MAIN_USAGE, reason: 'answer' })
 }
 
-const bandText = async ($: Engine, surface: 'terminal' | 'desktop', props = PROPS) => {
-  const ui = await $.ui.mount({ plugin: 'vitals', surface, component: 'AbovePrompt', props })
+/** The fullscreen layout, where `maxRows` is the band's own room; the main screen's is the terminal's. */
+const FULLSCREEN = { columns: 145, rows: 120, isFullscreen: true }
+const MAIN_SCREEN = { columns: 145, rows: 28, isFullscreen: false }
+
+/** The band's text; a `viewport` of null mounts it on a surface that has not measured. */
+const bandText = async ($: Engine, surface: 'terminal' | 'desktop', props = PROPS, viewport: typeof FULLSCREEN | null = FULLSCREEN) => {
+  const ui = await $.ui.mount({ plugin: 'vitals', surface, component: 'AbovePrompt', props, ...(viewport === null ? {} : { viewport }) })
   return (await ui.find({ text: /./ }))?.text ?? ''
 }
 
@@ -481,6 +487,40 @@ test('a narrow vitals box puts the session on a row of its own, the cost whole',
   expect(cost?.text).toBe('💸 $4.21')
   const header = (await ui.findAll({ text: /◆ VITALS.*📁 cc-vitals/ })).at(-1)
   expect(header?.text).toContain('📁 cc-vitals')
+})
+
+test('on the main screen the band takes at most half the terminal, in fullscreen the room it is given', () => {
+  expect(bandRows(28, true)).toBe(14)
+  expect(bandRows(41, true)).toBe(20)
+  expect(bandRows(28, false)).toBe(28)
+})
+
+const TALL = { ...PROPS, maxRows: 28, scroll: { offset: 0, bodyRows: 28 } }
+
+test('in fullscreen the band lays out in all the rows the slot gives it', async ($, on) => {
+  fakeEngine(on)
+  await runSession($)
+
+  expect(await bandText($, 'terminal', TALL)).toContain('CACHE R')
+})
+
+test('on the main screen the band leaves half the terminal to the answer above it', async ($, on) => {
+  fakeEngine(on)
+  await runSession($)
+
+  // 28 rows are the whole terminal: the band takes 14, one line a section.
+  const half = await bandText($, 'terminal', TALL, MAIN_SCREEN)
+  for (const text of ['◆ VITALS', '🔥 TOKENS', '🤖 AGENTS', '📊 USAGE', 'hit 97%']) expect(half).toContain(text)
+  expect(half).not.toContain('CACHE R')
+  // A terminal that has not said its layout gets the smaller band too.
+  expect(await bandText($, 'terminal', TALL, null)).not.toContain('CACHE R')
+})
+
+test('the desktop has no scrollback to keep: its band takes every row it is given', async ($, on) => {
+  fakeEngine(on)
+  await runSession($)
+
+  expect(await bandText($, 'desktop', TALL, MAIN_SCREEN)).toContain('CACHE R')
 })
 
 const TEN = Array.from({ length: 10 }, (_, i) => ({ id: `a${i}`, description: `Task ${i}`, type: 'Explore', status: 'running' as const }))
