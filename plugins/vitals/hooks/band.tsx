@@ -106,7 +106,7 @@ const clockTime = (ms: number, now: number) => {
 const forecastParts = (forecasts: Forecast[], now: number): Part[] =>
   forecasts.map(f => {
     const name = LIMIT_LABELS[f.kind] ?? limitShortLabel(f.kind)
-    const pace = f.pace === 'recent' ? 'last hour' : 'window avg'
+    const pace = f.pace === 'recent' ? 'last hour' : f.pace === 'blend' ? 'hour + avg' : 'window avg'
     return f.outAt === null
       ? { text: `${name} ≈ ${f.atReset}% at reset ✓ (${pace})`, color: f.atReset >= 80 ? 'warning' : 'success' }
       : { text: `${name} out at ${clockTime(f.outAt, now)}, reset ${clockTime(f.resetAt, now)} ⚠ (${pace})`, emphasis: 'warning' as const }

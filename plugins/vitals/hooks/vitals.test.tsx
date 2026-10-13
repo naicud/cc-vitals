@@ -5,7 +5,8 @@ import type { Engine } from 'claude-code/testing'
 import { bandRows } from './band'
 import { mergeLimits, mergeRoster, parseNotification, parsePlanUsage } from './collect'
 import { count, hitRate, isShown, prettyModel } from './format'
-import { forecast } from './forecast'
+import { addSample, forecast } from './forecast'
+import type { Sample } from './forecast'
 import { historySince, parseDaily, periods, weekStart } from './report'
 import { blocks, cellWidth, fitColumns } from './ui'
 
@@ -270,11 +271,46 @@ test('a limit forecast uses the window average, then the last hour once there is
   const resetsAt = new Date(NOW + 2 * 3_600_000).toISOString()
   // Three hours into a 5-hour window at 42%: 14% an hour, 70% at the reset.
   expect(forecast({ kind: 'five_hour', percent: 42, resetsAt }, [], NOW)).toMatchObject({ atReset: 70, outAt: null, pace: 'average' })
-  // Up 20 points in the last 20 minutes: 60% an hour, out 58 minutes from now.
-  const fast = forecast({ kind: 'five_hour', percent: 42, resetsAt }, [{ at: NOW - 20 * 60_000, percent: 22 }], NOW)
+  // Up 30 points in the last 30 minutes: 60% an hour, out 58 minutes from now.
+  const fast = forecast({ kind: 'five_hour', percent: 42, resetsAt }, [{ at: NOW - 30 * 60_000, percent: 12 }], NOW)
   expect(fast?.pace).toBe('recent')
   expect(Math.round(((fast?.outAt ?? 0) - NOW) / 60_000)).toBe(58)
+  // Twenty minutes of it count half: halfway between 60% and 14% an hour, 37%, out 94 minutes from now.
+  const half = forecast({ kind: 'five_hour', percent: 42, resetsAt }, [{ at: NOW - 20 * 60_000, percent: 22 }], NOW)
+  expect(half?.pace).toBe('blend')
+  expect(Math.round(((half?.outAt ?? 0) - NOW) / 60_000)).toBe(94)
   expect(forecast({ kind: 'spend_limit', percent: 10, resetsAt }, [], NOW)).toBe(null)
+})
+
+test('a limit forecast fits a line through the last hour: a pause flattens it, a dip or a late reading barely moves it', () => {
+  const resetsAt = new Date(NOW + 2 * 3_600_000).toISOString()
+  const five = (percent: number, samples: Sample[]) => forecast({ kind: 'five_hour', percent, resetsAt }, samples, NOW)
+  // 20 points in the half hour that ended 30 minutes ago, then a reading every 5 minutes at 42:
+  // about 19% an hour, not the busy stretch's 40%.
+  let paused: Sample[] = []
+  for (const [ago, percent] of [[60, 22], [45, 32], [30, 42], [25, 42], [20, 42], [15, 42], [10, 42], [5, 42]] as const) {
+    paused = addSample(paused, { at: NOW - ago * 60_000, percent })
+  }
+  expect(paused).toHaveLength(8)
+  expect(five(42, paused)).toMatchObject({ pace: 'recent', atReset: 80, outAt: null })
+  // 42, 41, 42: a point at most by the reset, not the 6% an hour the recovery alone would read.
+  expect(five(42, [{ at: NOW - 30 * 60_000, percent: 42 }, { at: NOW - 20 * 60_000, percent: 41 }, { at: NOW - 10 * 60_000, percent: 42 }])?.atReset).toBe(43)
+  // The plan's reading, stamped before its fetch, lands after a newer one from the session: about
+  // the same as in order (84%), where only comparing the two ends would lose the rise.
+  const early = [{ at: NOW - 30 * 60_000, percent: 33 }, { at: NOW - 15 * 60_000, percent: 38 }]
+  expect(five(43, [...early, { at: NOW - 100_000, percent: 40 }, { at: NOW - 120_000, percent: 43 }])?.atReset).toBe(80)
+  expect(five(43, [...early, { at: NOW - 120_000, percent: 43 }])?.atReset).toBe(84)
+})
+
+test('a weekly forecast goes at the week so far, not at the last hour', () => {
+  // Two days into the week at 30%, 2 points in the last hour, 120 hours to the reset: the week's
+  // 0.625% an hour gives 105%, out in 112 hours; the last hour's 2% would give 270%.
+  const week = forecast({ kind: 'seven_day', percent: 30, resetsAt: new Date(NOW + 120 * 3_600_000).toISOString() }, [{ at: NOW - 3_600_000, percent: 28 }], NOW)
+  expect(week).toMatchObject({ atReset: 105, pace: 'average' })
+  expect(Math.round(((week?.outAt ?? 0) - NOW) / 3_600_000)).toBe(112)
+  // Four hours in, the week has not seen a night yet: no forecast until a tenth of it has gone.
+  expect(forecast({ kind: 'seven_day', percent: 8, resetsAt: new Date(NOW + 164 * 3_600_000).toISOString() }, [], NOW)).toBe(null)
+  expect(forecast({ kind: 'seven_day', percent: 8, resetsAt: new Date(NOW + 151 * 3_600_000).toISOString() }, [], NOW)?.atReset).toBe(79)
 })
 
 test('an ended run stays three seconds, then leaves the band', () => {
