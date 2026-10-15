@@ -260,6 +260,8 @@ test('token counts shorten', () => {
 test('emoji take two cells, box drawing one', () => {
   expect(cellWidth('── 🔥 TOKENS')).toBe(12)
   expect(cellWidth('⚡ HIGH')).toBe(7)
+  expect(cellWidth('⚡\uFE0F HIGH')).toBe(7)
+  expect(cellWidth('🗜 COMPACT')).toBe(9)
 })
 
 test('bars resolve to an eighth of a cell', () => {
@@ -401,9 +403,9 @@ for (const surface of ['terminal', 'desktop'] as const) {
       '▰▰▰▱▱',
       '📁 cc-vitals  🌿 main ●2',
       '💸 $4.21',
-      '⛽ CTX',
+      '⛽\uFE0F CTX',
       '68%',
-      '⏳ 5H LIMIT',
+      '⏳\uFE0F 5H LIMIT',
       '📅 WEEKLY',
       '85%',
       '🔥 TOKENS',
@@ -474,7 +476,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await $.command.run({ command: 'vitals-low', args: '', ...COMMAND })
 
     const band = await bandText($, surface, { ...PROPS, bodyColumns: 200 })
-    for (const text of ['◆ VITALS', '⛽ CTX', '🗜 COMPACT', '⏳ 5H LIMIT', '📅 WEEKLY', '🔮 FORECAST', '💸 $4.21']) expect(band).toContain(text)
+    for (const text of ['◆ VITALS', '⛽\uFE0F CTX', '🗜 COMPACT', '⏳\uFE0F 5H LIMIT', '📅 WEEKLY', '🔮 FORECAST', '💸 $4.21']) expect(band).toContain(text)
     for (const text of ['🔥 TOKENS', '🤖 AGENTS', '🧩 CONTEXT', '📊 USAGE']) expect(band).not.toContain(text)
   })
 
@@ -538,7 +540,7 @@ test('after a /clear the band is drawn again at once, at the level the store kee
   await $.classic.SessionStart({ source: 'clear' })
 
   const band = await bandText($, 'terminal', { ...PROPS, bodyColumns: 200 })
-  for (const text of ['◆ VITALS', '⛽ CTX', '💸 $4.21']) expect(band).toContain(text)
+  for (const text of ['◆ VITALS', '⛽\uFE0F CTX', '💸 $4.21']) expect(band).toContain(text)
   for (const text of ['🔥 TOKENS', '🤖 AGENTS', '🧩 CONTEXT']) expect(band).not.toContain(text)
 })
 
