@@ -11,12 +11,7 @@ import { ACCENT, CARD_CELLS, cellWidth, meter, meterChrome, parts } from './ui'
 
 export type { BandInput } from './sections'
 
-// ⚡, ⏳ and ⛽ are two cells wide but have a text form; without the emoji selector some fonts draw
-// them one cell wide and VS Code's terminal pulls the rest of the row, right border too, left.
-const BOLT = '⚡\uFE0F'
-const HOURGLASS = '⏳\uFE0F'
-const FUEL = '⛽\uFE0F'
-const LIMIT_ICONS: Record<string, string> = { five_hour: HOURGLASS, seven_day: '📅' }
+const LIMIT_ICONS: Record<string, string> = { five_hour: '⏳', seven_day: '📅' }
 const LIMIT_LABELS: Record<string, string> = { five_hour: '5H LIMIT', seven_day: 'WEEKLY' }
 
 /** A meter's bar never gets narrower than this; below it the meters go two to a row. */
@@ -47,7 +42,7 @@ const accountItems = (input: BandInput, isEvery: boolean): Item[] => {
   const rows = plan.rows
     .filter(r => isEvery || r.percent > 0 || r.isActive || r.severity !== 'normal')
     .map(r => ({
-      label: `${r.isActive ? ACTIVE : ''}${r.kind.startsWith('weekly') ? '📅' : HOURGLASS} ${r.label.toUpperCase()}`,
+      label: `${r.isActive ? ACTIVE : ''}${r.kind.startsWith('weekly') ? '📅' : '⏳'} ${r.label.toUpperCase()}`,
       percent: r.percent,
       detail: r.resetsAt ? `↻ ${until(r.resetsAt, input.now)}` : '',
       severity: r.severity,
@@ -72,13 +67,13 @@ const meterItems = (input: BandInput, isEvery: boolean): Item[] => {
     compactAt === null ? 'auto off' : toCompact === null ? `at ${count(compactAt)}` : toCompact.left > 0 ? `${count(toCompact.left)} to go` : 'due'
   return [
     {
-      label: `${FUEL} CTX`,
+      label: '⛽ CTX',
       percent: snap.contextPercent,
       detail: snap.contextTokens === null ? '' : `${count(snap.contextTokens)}/${count(snap.contextWindow)}`,
     },
     { label: '🗜 COMPACT', percent: toCompact?.percent ?? null, detail: `${compactDetail}${done > 0 ? ` · ×${done}` : ''}` },
     ...snap.limits.map(l => ({
-      label: `${l.isActive === true ? ACTIVE : ''}${LIMIT_ICONS[l.kind] ?? HOURGLASS} ${LIMIT_LABELS[l.kind] ?? limitShortLabel(l.kind)}`,
+      label: `${l.isActive === true ? ACTIVE : ''}${LIMIT_ICONS[l.kind] ?? '⏳'} ${LIMIT_LABELS[l.kind] ?? limitShortLabel(l.kind)}`,
       percent: l.percent,
       detail: l.resetsAt ? `↻ ${until(l.resetsAt, input.now)}` : '',
       severity: l.severity,
@@ -132,8 +127,8 @@ const vitals = (input: BandInput, room: number, isEvery = false) => {
   const { rows, bar } = meterRows(meterItems(input, isEvery), inner)
   const ahead = forecastParts(input.forecasts, input.now)
   const pips = input.effort === null ? '' : ` ${effortPips(input.effort)}`
-  const title = `◆ VITALS   🧠 ${prettyModel(snap.model)}   ${BOLT} ${level.text.toUpperCase()}${pips}`
-  const session = `${where}   ${HOURGLASS} ${ago(ageMs)} · ${snap.prompts} prompt${snap.prompts === 1 ? '' : 's'}   `
+  const title = `◆ VITALS   🧠 ${prettyModel(snap.model)}   ⚡ ${level.text.toUpperCase()}${pips}`
+  const session = `${where}   ⏳ ${ago(ageMs)} · ${snap.prompts} prompt${snap.prompts === 1 ? '' : 's'}   `
   const cost = snap.costUsd === null ? '' : `💸 ${money(snap.costUsd)}`
   // Where the title and the session do not fit side by side, the session takes a row of its own.
   const isStacked = cellWidth(title) + 2 + cellWidth(session + cost + burn) > inner
@@ -166,7 +161,7 @@ const vitals = (input: BandInput, room: number, isEvery = false) => {
             <Text bold color={ACCENT}>{'◆ VITALS'}</Text>
             <Text>{'   🧠 '}</Text>
             <Text bold>{prettyModel(snap.model)}</Text>
-            <Text>{`   ${BOLT} `}</Text>
+            <Text>{'   ⚡ '}</Text>
             <Text bold color={level.color} dimColor={level.dim}>{level.text.toUpperCase()}</Text>
             {pips !== '' && <Text color={level.color}>{pips}</Text>}
           </Box>

@@ -23,8 +23,6 @@ const SEPARATOR = ' │ '
 
 // Symbols the terminal draws two cells wide although they sit below the emoji planes.
 const WIDE = new Set([0x23f3, 0x231b, 0x26a1, 0x26fd, 0x2705, 0x274c, 0x2b50])
-// Symbols in the emoji planes that are text by default, one cell wide.
-const NARROW = new Set([0x1f5dc])
 
 /** Cells a string takes in the terminal: emoji count two, joiners and selectors none. */
 export const cellWidth = (text: string) => {
@@ -32,7 +30,7 @@ export const cellWidth = (text: string) => {
   for (const ch of text) {
     const cp = ch.codePointAt(0) ?? 0
     if (cp === 0xfe0f || cp === 0x200d) continue
-    width += (cp >= 0x1f000 && !NARROW.has(cp)) || WIDE.has(cp) ? 2 : 1
+    width += cp >= 0x1f000 || WIDE.has(cp) ? 2 : 1
   }
   return width
 }
